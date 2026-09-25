@@ -18,7 +18,7 @@ function toTrack(raw: sp.RawTrack): Track | null {
     uri: raw.uri,
     name: raw.name,
     artists: raw.artists.filter((a) => a.id).map((a) => ({ id: a.id!, name: a.name })),
-    album: { id: raw.album.id, name: raw.album.name, releaseDate: raw.album.release_date ?? '', image },
+    album: { id: raw.album.id, name: raw.album.name, releaseDate: raw.album.release_date ?? '', image, totalTracks: raw.album.total_tracks },
     durationMs: raw.duration_ms,
     explicit: raw.explicit,
     isrc: raw.external_ids?.isrc,
@@ -82,13 +82,18 @@ export async function syncLibrary(
     };
   });
   const toSync = playlists.filter((p) => p.synced);
+  const playlistItems: Record<string, string[]> = {};
   for (const [i, pl] of toSync.entries()) {
     onProgress({ label: `Playlist « ${pl.name} »`, done: i, total: toSync.length });
     try {
+      const ids: string[] = [];
       for (const raw of await sp.getPlaylistTracks(pl.id, signal)) {
         const t = upsert(raw);
-        if (t && !t.playlists.includes(pl.id)) t.playlists.push(pl.id);
+        if (!t) continue;
+        ids.push(t.id);
+        if (!t.playlists.includes(pl.id)) t.playlists.push(pl.id);
       }
+      playlistItems[pl.id] = ids;
     } catch (e) {
       if (signal?.aborted) throw e;
       pl.synced = false; // playlist illisible : on continue sans elle
@@ -124,6 +129,7 @@ export async function syncLibrary(
     tracks,
     artists,
     playlists,
+    playlistItems,
     syncedAt: new Date().toISOString(),
   };
 }

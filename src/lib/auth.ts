@@ -13,6 +13,11 @@ export const SCOPES = [
   'user-top-read',
   'user-read-recently-played',
   'user-follow-read',
+  'user-follow-modify',
+  'user-library-modify',
+  'user-read-playback-state',
+  'user-modify-playback-state',
+  'user-read-currently-playing',
 ];
 
 const K_CLIENT = 'sillon.clientId';
@@ -24,6 +29,8 @@ interface Tokens {
   accessToken: string;
   refreshToken: string;
   expiresAt: number;
+  /** Scopes accordés (absent sur les sessions créées avant leur mémorisation). */
+  scope?: string;
 }
 
 export function getClientId(): string {
@@ -111,6 +118,7 @@ async function requestTokens(body: Record<string, string>): Promise<Tokens> {
     // Spotify ne renvoie pas toujours un nouveau refresh token.
     refreshToken: json.refresh_token ?? previous?.refreshToken ?? '',
     expiresAt: Date.now() + json.expires_in * 1000,
+    scope: json.scope ?? previous?.scope,
   };
   localStorage.setItem(K_TOKENS, JSON.stringify(tokens));
   return tokens;
@@ -123,6 +131,12 @@ function readTokens(): Tokens | null {
   } catch {
     return null;
   }
+}
+
+/** Scopes demandés par l'app mais pas accordés à la session actuelle (nouvelles fonctions). */
+export function missingScopes(): string[] {
+  const granted = new Set((readTokens()?.scope ?? '').split(' '));
+  return SCOPES.filter((s) => !granted.has(s));
 }
 
 export function isLoggedIn(): boolean {

@@ -24,11 +24,17 @@ Colle le Client ID à l'écran d'accueil, ou mets-le dans `.env` (voir `.env.exa
 
 | Onglet | Ce qu'il fait |
 |---|---|
-| **Analyse** | Familles de genres, genres précis, moods, décennies, artistes les plus présents, profil sonore, likes par année, nouveaux artistes par année, doublons probables. Chaque barre est cliquable et ouvre le Créateur pré-rempli. |
-| **Suggestions** | Playlists prêtes à créer : *ambiances* détectées par clustering (k-means sur le son et le genre), moods, genres, décennies, « Pépites oubliées », « Mes nouveautés », « Incontournables », « Essentiel : artiste ». Aperçu, nouveau tirage, création en lot. |
-| **Créateur** | Règles combinables : familles et genres, moods, artistes à inclure ou exclure, années, date d'ajout, sources (likés, playlists, tops, récents), énergie, positivité, dansabilité, acoustique, tempo, explicite, durée. Presets (Running, Soirée, Focus, Dîner…). 9 ordres possibles, dont **Mix DJ** (enchaînement par roue de Camelot et tempo) et **Arc d'énergie**. Plafond de titres par artiste, artistes espacés. |
-| **Mes playlists** | Chaque playlist créée garde sa recette. « Actualiser » la régénère (nouveaux likes, nouveau tirage) sans changer le lien. |
-| **Réglages** | Clé Last.fm, préfixe de nom, public/privé par défaut, export CSV, purge du cache. |
+| **Analyse** | Familles de genres, genres précis, moods, décennies, artistes les plus présents, profil sonore, likes par année, doublons probables. Chaque barre est cliquable et ouvre le Créateur pré-rempli. |
+| **Écoutes** | Import de ton historique Spotify (export « streaming étendu »), puis stats sur n'importe quelle période : temps d'écoute réel, carte heure × jour, tops par minutes, séries de jours, taux de skip (y compris « liké mais toujours skippé »), époques mois par mois, obsessions, fidélité, humeur × moment, machine à remonter le temps, playlists de tes moments (matins, soirées, week-ends), comparaison année par année. |
+| **Playlists** | *Suggestions* (ambiances détectées par clustering, moods, genres, époques, redécouvertes), *Créateur* à règles (genre, mood, artistes, années, énergie, tempo…, 9 ordres dont **Mix DJ** et **Arc d'énergie**), *Playlists vivantes* actualisables, avec actualisation automatique en option. |
+| **Découvrir** | *Recommandations* à partir de tes écoutes récentes, de tes favoris, d'une playlist à prolonger ou d'artistes précis : artistes similaires (Deezer), extraits 30 s, tout ce que tu connais déjà est écarté. *Radar de sorties* de tes artistes. *À creuser* : artistes très écoutés mais absents de ta bibliothèque, albums à écouter en entier. |
+| **Ranger** | Titres de tes playlists non likés (like groupé). Trieur des likés sans playlist, avec suggestions et raccourcis clavier. Doublons dans une playlist, playlists qui se recouvrent, fusion, découpage par genre/décennie/mood, réordonnancement sur place. Artistes à suivre. Sauvegardes, différences et restauration. |
+| **Amis** | Carte de goûts exportable (JSON à échanger, image à partager), score de compatibilité détaillé, artistes à se faire découvrir, **Blend** à deux. Tout se passe sans serveur. |
+| **Lecteur** | Pilote ton appareil Spotify actif (Premium) : lire une playlist générée sans la créer, file d'attente, suivant/précédent. |
+
+## Enregistrement continu (optionnel)
+
+L'API ne garde que tes 50 dernières écoutes. Le dossier [`worker/`](worker/) contient un worker Cloudflare gratuit qui les relève toutes les 30 minutes. Sillon les récupère ensuite à chaque ouverture. Voir [worker/README.md](worker/README.md).
 
 ## Contraintes de l'API Spotify (2026) et contournements
 
@@ -41,6 +47,8 @@ Depuis nov. 2024 et fév. 2026, les apps en *Development Mode* n'ont plus accès
 | Batch `GET /artists?ids=` | Inutile : les genres viennent d'ailleurs. |
 | `POST /users/{id}/playlists`, `/playlists/{id}/tracks` | `POST /me/playlists`, `/playlists/{id}/items`. |
 | Popularité | Remplacée par un score d'*affinité* personnel : tops, écoutes récentes, présence dans tes playlists. |
+| `recommendations`, `related-artists`, `browse/new-releases` | Artistes similaires et titres phares via l'API publique **Deezer** (JSONP, sans clé), résolus sur Spotify par recherche. Le radar de sorties interroge chaque artiste. |
+| Historique au-delà de 50 écoutes | Import de l'export RGPD de Spotify + worker optionnel. |
 | Contenu des playlists des autres | Seules les playlists possédées ou collaboratives sont analysées. |
 
 L'enrichissement est interruptible et reprend où il s'était arrêté. Les artistes les plus présents dans ta bibliothèque passent en premier.
@@ -48,7 +56,7 @@ L'enrichissement est interruptible et reprend où il s'était arrêté. Les arti
 ## Développement
 
 ```bash
-npm test             # tests unitaires (genres, moods, Camelot, générateur, clustering, stats)
+npm test             # tests unitaires (genres, moods, Camelot, générateur, clustering, historique, rangement, social)
 npm run typecheck
 npm run build
 ```
@@ -56,14 +64,16 @@ npm run build
 Structure :
 
 ```
-src/lib/        logique pure : auth PKCE, client Spotify, sync, enrichissement,
-                genres/moods, indexation, générateur, ordonnancement, suggestions, stats
+src/lib/        logique pure : auth PKCE, client Spotify, sync, enrichissement, genres/moods,
+                indexation, générateur, ordonnancement, suggestions, stats, historique,
+                recommandations (Deezer), radar, outils de rangement, social
+worker/         worker Cloudflare optionnel d'enregistrement des écoutes
 src/components/ écrans React
 src/store.tsx   état global + persistance IndexedDB
 ```
 
 ## Pistes pour la suite
 
-- Déployer sur un domaine HTTPS (Vercel/Netlify) : ajouter la Redirect URI correspondante.
-- Actualisation automatique des playlists « vivantes » (nécessiterait un petit backend + refresh token).
-- Tags Last.fm au niveau du titre (`track.getTopTags`) pour des moods plus fins quand ReccoBeats ne connaît pas un titre.
+- Déployer sur un domaine HTTPS (Vercel, Netlify) : ajouter la Redirect URI correspondante.
+- Concerts de tes artistes : Bandsintown et Songkick exigent une clé partenaire, à brancher si tu en obtiens une.
+- Web Playback SDK : faire de Sillon lui-même un appareil de lecture.

@@ -30,7 +30,9 @@ export async function api<T>(path: string, init: RequestInit = {}, signal?: Abor
     } catch {
       /* corps vide */
     }
-    if (res.status === 403) message += ' — ton compte est-il bien ajouté aux utilisateurs de l’app (Dashboard > User Management) ?';
+    if (res.status === 403 && /premium/i.test(message)) message = 'Cette action nécessite Spotify Premium.';
+    else if (res.status === 403) message += ' — ton compte est-il bien ajouté aux utilisateurs de l’app (Dashboard > User Management) ?';
+    if (res.status === 404 && url.includes('/me/player')) message = 'Aucun appareil Spotify actif : ouvre Spotify sur ton téléphone ou ordinateur.';
     throw new HttpError(res.status, `Spotify : ${message}`);
   }
   const text = await res.text();
@@ -80,7 +82,7 @@ export interface RawTrack {
   explicit: boolean;
   external_ids?: { isrc?: string };
   artists: { id: string | null; name: string }[];
-  album: { id: string; name: string; release_date: string; images?: { url: string; width?: number }[] };
+  album: { id: string; name: string; release_date: string; total_tracks?: number; images?: { url: string; width?: number }[] };
 }
 
 export interface RawPlaylist {
@@ -156,5 +158,95 @@ export async function setPlaylistItems(id: string, uris: string[]) {
   }
 }
 
+export async function addPlaylistItems(id: string, uris: string[]) {
+  for (const part of chunk(uris, 100)) {
+    await api(`/playlists/${id}/items`, { method: 'POST', body: JSON.stringify({ uris: part }) });
+  }
+}
+
+// ---- Bibliothèque (endpoints génériques de 2026, URIs en query, 40 max) ----
+
+/** Like des titres / suit des artistes : `spotify:track:…`, `spotify:artist:…`. */
+export async function saveToLibrary(uris: string[]) {
+  for (const part of chunk(uris, 40)) {
+    await api(`/me/library?uris=${part.map(encodeURIComponent).join(',')}`, { method: 'PUT' });
+  }
+}
+
+// ---- Catalogue ----
+
+export interface SimpleAlbum {
+  id: string;
+  uri: string;
+  name: string;
+  album_type: 'album' | 'single' | 'compilation';
+  release_date: string;
+  total_tracks: number;
+  images?: { url: string; width?: number }[];
+  artists: { id: string; name: string }[];
+}
+
+/** Dernières sorties d'un artiste (la limite est de 10 par page en mode dev). */
+export async function getArtistReleases(id: string, group: 'album' | 'single', signal?: AbortSignal) {
+  const page = await api<Page<SimpleAlbum>>(`/artists/${id}/albums?include_groups=${group}&limit=5`, {}, signal);
+  return page.items;
+}
+
+export async function getAlbumTracks(id: string, signal?: AbortSignal) {
+  const page = await api<Page<{ id: string; uri: string; name: string }>>(`/albums/${id}/tracks?limit=50`, {}, signal);
+  return page.items;
+}
+
+/** Recherche de titres (10 résultats max en mode dev). */
+export async function searchTracks(q: string, limit = 5, signal?: AbortSignal): Promise<RawTrack[]> {
+  const json = await api<{ tracks: Page<RawTrack> }>(
+    `/search?type=track&limit=${limit}&q=${encodeURIComponent(q)}`,
+    {},
+    signal,
+  );
+  return json.tracks?.items ?? [];
+}
+
+// ---- Lecteur (Spotify Connect, nécessite Premium) ----
+
+export interface Device {
+  id: string | null;
+  name: string;
+  type: string;
+  is_active: boolean;
+  volume_percent: number | null;
+}
+
+export interface PlaybackState {
+  is_playing: boolean;
+  progress_ms: number | null;
+  device: Device;
+  shuffle_state: boolean;
+  item: RawTrack | null;
+}
+
+/** undefined quand aucun appareil n'est actif (réponse 204). */
+export const getPlayback = () => api<PlaybackState | undefined>('/me/player');
+export const getDevices = async () => (await api<{ devices: Device[] }>('/me/player/devices')).devices;
+
+export async function play(opts: { uris?: string[]; contextUri?: string; offset?: number; deviceId?: string }) {
+  const q = opts.deviceId ? `?device_id=${opts.deviceId}` : '';
+  const body: Record<string, unknown> = {};
+  // Au-delà de quelques centaines d'URIs la requête est refusée : on démarre avec un lot raisonnable.
+  if (opts.uris) body.uris = opts.uris.slice(0, 200);
+  if (opts.contextUri) body.context_uri = opts.contextUri;
+  if (opts.offset !== undefined) body.offset = { position: opts.offset };
+  await api(`/me/player/play${q}`, { method: 'PUT', body: JSON.stringify(body) });
+}
+export const pause = () => api('/me/player/pause', { method: 'PUT' });
+export const resume = () => api('/me/player/play', { method: 'PUT' });
+export const nextTrack = () => api('/me/player/next', { method: 'POST' });
+export const previousTrack = () => api('/me/player/previous', { method: 'POST' });
+export const queue = (uri: string) => api(`/me/player/queue?uri=${encodeURIComponent(uri)}`, { method: 'POST' });
+export const transferPlayback = (deviceId: string) =>
+  api('/me/player', { method: 'PUT', body: JSON.stringify({ device_ids: [deviceId], play: false }) });
+
 export const playlistUrl = (id: string) => `https://open.spotify.com/playlist/${id}`;
 export const trackUrl = (id: string) => `https://open.spotify.com/track/${id}`;
+export const albumUrl = (id: string) => `https://open.spotify.com/album/${id}`;
+export const artistUrl = (id: string) => `https://open.spotify.com/artist/${id}`;

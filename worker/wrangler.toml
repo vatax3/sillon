@@ -1,0 +1,20 @@
+name = "sillon-history"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# Relève les écoutes toutes les 30 minutes (l'API n'en garde que 50, soit ~2-3 h de musique).
+[triggers]
+crons = ["*/30 * * * *"]
+
+[vars]
+# Le même Client ID que l'app Sillon (ou une app Spotify dédiée).
+SPOTIFY_CLIENT_ID = ""
+# Origine autorisée à lire /plays (ex. "http://127.0.0.1:5173") ; "*" par défaut.
+ALLOWED_ORIGIN = "*"
+
+# Créé par : npx wrangler kv namespace create HISTORY
+[[kv_namespaces]]
+binding = "HISTORY"
+id = "REMPLACE_PAR_L_ID_DU_NAMESPACE"
+
+# Secret à définir avec : npx wrangler secret put API_KEY

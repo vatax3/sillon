@@ -79,11 +79,18 @@ export default function PlaylistPreview({
               ` · ${result.missingFeatures} écartés faute d’audio-features (lance l’enrichissement)`}
           </p>
         </div>
-        {onReroll && tracks.length > 0 && (
-          <button className="ghost" onClick={onReroll} title="Nouveau tirage avec les mêmes critères">
-            🎲 Autre tirage
-          </button>
-        )}
+        <span className="row">
+          {tracks.length > 0 && (
+            <button className="ghost" onClick={() => store.playUris(tracks.map((t) => t.track.uri))} title="Lire sur ton appareil Spotify actif, sans créer la playlist">
+              ▶ Écouter
+            </button>
+          )}
+          {onReroll && tracks.length > 0 && (
+            <button className="ghost" onClick={onReroll} title="Nouveau tirage avec les mêmes critères">
+              🎲 Autre tirage
+            </button>
+          )}
+        </span>
       </div>
 
       {tracks.length === 0 ? (
@@ -119,6 +126,7 @@ export default function PlaylistPreview({
           <TrackList
             tracks={tracks}
             showDjInfo={djInfo}
+            onPlay={(i) => store.playUris(tracks.map((t) => t.track.uri), i)}
             onRemove={created ? undefined : (id) => setRemoved(new Set(removed).add(id))}
           />
         </>

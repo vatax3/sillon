@@ -1,4 +1,6 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
+import { togglePreview, usePreview } from '../lib/preview';
+import { useStore } from '../store';
 import type { EnrichedTrack } from '../lib/indexer';
 import { MOOD_BY_ID } from '../lib/moods';
 import { camelotLabel, toCamelot } from '../lib/ordering';
@@ -55,14 +57,16 @@ export function BarChart({
 export function Columns({ bars, unit }: { bars: Bar[]; unit: string }) {
   if (!bars.length) return <p className="muted small">Pas encore de données.</p>;
   const top = Math.max(...bars.map((b) => b.value));
+  const step = bars.length > 14 ? Math.ceil(bars.length / 12) : 1;
+  const short = (label: string) => (bars.length > 12 && /^\d{4}$/.test(label) ? `’${label.slice(2)}` : label);
   return (
     <figure className="columns-fig">
       <div className="columns" role="img" aria-label={bars.map((b) => `${b.label} : ${b.value} ${unit}`).join(', ')}>
-        {bars.map((b) => (
+        {bars.map((b, i) => (
           <div className="col" key={b.key} title={`${b.label} : ${b.value.toLocaleString('fr-FR')} ${unit}`}>
             <span className="col-value">{b.value === top ? b.value.toLocaleString('fr-FR') : ''}</span>
             <span className="col-fill" style={{ height: `calc((100% - 16px) * ${Math.max(0.02, b.value / top)})` }} />
-            <span className="col-label">{bars.length > 12 ? `’${b.label.slice(2)}` : b.label}</span>
+            <span className="col-label">{i % step === 0 ? short(b.label) : ''}</span>
           </div>
         ))}
       </div>
@@ -199,10 +203,13 @@ export const totalDuration = (tracks: EnrichedTrack[]) => {
 export function TrackList({
   tracks,
   onRemove,
+  onPlay,
   showDjInfo,
 }: {
   tracks: EnrichedTrack[];
   onRemove?: (id: string) => void;
+  /** Lance la lecture de la liste à partir de ce titre. */
+  onPlay?: (index: number) => void;
   showDjInfo?: boolean;
 }) {
   return (
@@ -211,7 +218,14 @@ export function TrackList({
         const f = t.features;
         return (
           <li key={t.track.id}>
-            <span className="idx">{i + 1}</span>
+            {onPlay ? (
+              <button className="idx play" onClick={() => onPlay(i)} aria-label={`Lire à partir de ${t.track.name}`}>
+                <span className="n">{i + 1}</span>
+                <span className="p">▶</span>
+              </button>
+            ) : (
+              <span className="idx">{i + 1}</span>
+            )}
             {t.track.album.image ? <img src={t.track.album.image} alt="" loading="lazy" /> : <span className="noimg" />}
             <span className="tl-main">
               <a href={trackUrl(t.track.id)} target="_blank" rel="noreferrer" className="tl-title">
@@ -245,5 +259,192 @@ export function TrackList({
         );
       })}
     </ol>
+  );
+}
+
+// ---------- Sous-onglets ----------
+
+export function SubTabs<T extends string>({
+  tabs,
+  value,
+  onChange,
+}: {
+  tabs: { id: T; label: string; badge?: number }[];
+  value: T;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <nav className="subtabs" role="tablist">
+      {tabs.map((t) => (
+        <button key={t.id} role="tab" aria-selected={value === t.id} className={value === t.id ? 'subtab active' : 'subtab'} onClick={() => onChange(t.id)}>
+          {t.label}
+          {!!t.badge && <span className="count">{t.badge}</span>}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+// ---------- Ligne de titre générique (recos, historique, radar…) ----------
+
+export function PreviewButton({ url }: { url?: string }) {
+  const playing = usePreview();
+  if (!url) return null;
+  const on = playing === url;
+  return (
+    <button className={on ? 'ghost small icon on' : 'ghost small icon'} onClick={() => togglePreview(url)} aria-label={on ? 'Arrêter l’extrait' : 'Écouter un extrait de 30 s'} title="Extrait 30 s">
+      {on ? '■' : '▶'}
+    </button>
+  );
+}
+
+export function TrackRow({
+  image,
+  title,
+  subtitle,
+  href,
+  meta,
+  children,
+  selected,
+  onSelect,
+}: {
+  /** null = ligne sans vignette (playlist, artiste). */
+  image?: string | null;
+  title: string;
+  subtitle?: string;
+  href?: string;
+  meta?: ReactNode;
+  children?: ReactNode;
+  selected?: boolean;
+  onSelect?: (v: boolean) => void;
+}) {
+  return (
+    <li className="trackrow">
+      {onSelect && <input type="checkbox" checked={!!selected} onChange={(e) => onSelect(e.target.checked)} aria-label={`Sélectionner ${title}`} />}
+      {image ? <img src={image} alt="" loading="lazy" /> : image === null ? null : <span className="noimg" />}
+      <span className="tl-main">
+        {href ? (
+          <a href={href} target="_blank" rel="noreferrer" className="tl-title">
+            {title}
+          </a>
+        ) : (
+          <span className="tl-title">{title}</span>
+        )}
+        {subtitle && <span className="tl-sub">{subtitle}</span>}
+      </span>
+      {meta && <span className="tr-meta">{meta}</span>}
+      {children && <span className="tr-actions">{children}</span>}
+    </li>
+  );
+}
+
+/** Sélection multiple réutilisable pour les listes avec actions groupées. */
+export function useSelection(ids: string[]) {
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const all = ids.length > 0 && ids.every((id) => sel.has(id));
+  return {
+    selected: sel,
+    has: (id: string) => sel.has(id),
+    set: (id: string, v: boolean) => {
+      const next = new Set(sel);
+      if (v) next.add(id);
+      else next.delete(id);
+      setSel(next);
+    },
+    all,
+    toggleAll: () => setSel(all ? new Set() : new Set(ids)),
+    clear: () => setSel(new Set()),
+  };
+}
+
+/** Bouton qui gère son propre état « en cours » et remonte les erreurs au store. */
+export function AsyncButton({
+  onClick,
+  children,
+  className = 'ghost small',
+  disabled,
+  title,
+}: {
+  onClick: () => Promise<unknown>;
+  children: ReactNode;
+  className?: string;
+  disabled?: boolean;
+  title?: string;
+}) {
+  const [busy, setBusy] = useState(false);
+  const { report } = useStore();
+  return (
+    <button
+      className={className}
+      disabled={disabled || busy}
+      title={title}
+      onClick={async () => {
+        setBusy(true);
+        try {
+          await onClick();
+        } catch (e) {
+          report(e);
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      {busy ? '…' : children}
+    </button>
+  );
+}
+
+// ---------- Carte thermique heure × jour ----------
+
+const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+
+export function Heatmap({ data }: { data: number[][] }) {
+  const max = Math.max(...data.flat(), 1);
+  return (
+    <div className="heatmap-wrap">
+      <div className="heatmap" role="table" aria-label="Minutes d'écoute par jour et par heure">
+        <span />
+        {Array.from({ length: 24 }, (_, h) => (
+          <span key={h} className="hm-hour">
+            {h % 3 === 0 ? `${h}h` : ''}
+          </span>
+        ))}
+        {data.map((row, d) => (
+          <Fragment key={d}>
+            <span className="hm-day">{DAYS[d]}</span>
+            {row.map((v, h) => (
+              <span
+                key={h}
+                className="hm-cell"
+                title={`${DAYS[d]} ${h}h–${h + 1}h : ${Math.round(v).toLocaleString('fr-FR')} min`}
+                style={{ '--i': v / max } as React.CSSProperties}
+              />
+            ))}
+          </Fragment>
+        ))}
+      </div>
+      <div className="hm-legend small muted">
+        moins <span className="hm-cell" style={{ '--i': 0.05 } as React.CSSProperties} />
+        <span className="hm-cell" style={{ '--i': 0.35 } as React.CSSProperties} />
+        <span className="hm-cell" style={{ '--i': 0.7 } as React.CSSProperties} />
+        <span className="hm-cell" style={{ '--i': 1 } as React.CSSProperties} /> plus
+      </div>
+    </div>
+  );
+}
+
+/** Sélecteur de playlist possédée (pour « ajouter à… »). */
+export function PlaylistPicker({ value, onChange, placeholder = 'Choisir une playlist…' }: { value: string; onChange: (id: string) => void; placeholder?: string }) {
+  const { library } = useStore();
+  const owned = (library?.playlists ?? []).filter((p) => p.owned || p.collaborative);
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} aria-label="Playlist">
+      <option value="">{placeholder}</option>
+      {owned.map((p) => (
+        <option key={p.id} value={p.id}>
+          {p.name} ({p.trackCount})
+        </option>
+      ))}
+    </select>
   );
 }

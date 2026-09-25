@@ -11,7 +11,7 @@ export interface Track {
   uri: string;
   name: string;
   artists: ArtistRef[];
-  album: { id: string; name: string; releaseDate: string; image?: string };
+  album: { id: string; name: string; releaseDate: string; image?: string; totalTracks?: number };
   durationMs: number;
   explicit: boolean;
   isrc?: string;
@@ -55,6 +55,8 @@ export interface Library {
   tracks: Record<string, Track>;
   artists: Record<string, Artist>;
   playlists: PlaylistMeta[];
+  /** Contenu ordonné de chaque playlist synchronisée (ids de titres, doublons compris). */
+  playlistItems?: Record<string, string[]>;
   syncedAt: string;
 }
 
@@ -155,4 +157,15 @@ export interface Settings {
   lastfmKey: string;
   playlistPrefix: string;
   publicByDefault: boolean;
+  /** URL du worker Cloudflare qui enregistre les écoutes (optionnel). */
+  workerUrl: string;
+  workerKey: string;
+  /** Actualise les playlists vivantes à l'ouverture si elles ont plus de N jours (0 = jamais). */
+  autoRefreshDays: number;
+}
+
+export interface PlaylistBackup {
+  id: string;
+  createdAt: string;
+  playlists: { id: string; name: string; trackIds: string[] }[];
 }

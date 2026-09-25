@@ -1,22 +1,31 @@
 import { useEffect, useRef, useState } from 'react';
 import Builder from './components/Builder';
 import Dashboard from './components/Dashboard';
+import Discover from './components/Discover';
+import Friends from './components/Friends';
+import History from './components/History';
 import MyPlaylists from './components/MyPlaylists';
+import PlayerBar from './components/PlayerBar';
 import SettingsPage from './components/SettingsPage';
 import Suggestions from './components/Suggestions';
 import TaskBar from './components/TaskBar';
+import Tidy from './components/Tidy';
+import { SubTabs } from './components/ui';
 import Welcome from './components/Welcome';
-import { handleCallback, isLoggedIn } from './lib/auth';
+import { handleCallback, isLoggedIn, login } from './lib/auth';
 import type { Rule } from './lib/types';
 import { StoreProvider, useStore } from './store';
 
-type Tab = 'dashboard' | 'suggestions' | 'builder' | 'mine' | 'settings';
+type Tab = 'dashboard' | 'history' | 'playlists' | 'discover' | 'tidy' | 'friends' | 'settings';
+type PlaylistView = 'suggestions' | 'builder' | 'mine';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'dashboard', label: 'Analyse' },
-  { id: 'suggestions', label: 'Suggestions' },
-  { id: 'builder', label: 'Créateur' },
-  { id: 'mine', label: 'Mes playlists' },
+  { id: 'history', label: 'Écoutes' },
+  { id: 'playlists', label: 'Playlists' },
+  { id: 'discover', label: 'Découvrir' },
+  { id: 'tidy', label: 'Ranger' },
+  { id: 'friends', label: 'Amis' },
   { id: 'settings', label: 'Réglages' },
 ];
 
@@ -45,6 +54,7 @@ export default function App() {
 function Shell() {
   const store = useStore();
   const [tab, setTab] = useState<Tab>('dashboard');
+  const [playlistView, setPlaylistView] = useState<PlaylistView>('suggestions');
   const [draft, setDraft] = useState<Rule | null>(null);
   const autoSynced = useRef(false);
 
@@ -58,7 +68,8 @@ function Shell() {
 
   const openInBuilder = (rule: Rule) => {
     setDraft(rule);
-    setTab('builder');
+    setTab('playlists');
+    setPlaylistView('builder');
   };
 
   return (
@@ -70,15 +81,8 @@ function Shell() {
         </div>
         <nav className="tabs" role="tablist">
           {TABS.map((t) => (
-            <button
-              key={t.id}
-              role="tab"
-              aria-selected={tab === t.id}
-              className={tab === t.id ? 'tab active' : 'tab'}
-              onClick={() => setTab(t.id)}
-            >
+            <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? 'tab active' : 'tab'} onClick={() => setTab(t.id)}>
               {t.label}
-              {t.id === 'mine' && store.saved.length > 0 && <span className="count">{store.saved.length}</span>}
             </button>
           ))}
         </nav>
@@ -92,6 +96,15 @@ function Shell() {
 
       <TaskBar />
 
+      {store.needsReauth && (
+        <div className="banner" role="status">
+          <span>Sillon a de nouvelles fonctions (liker, suivre, lecteur) qui demandent une autorisation supplémentaire.</span>
+          <button className="primary small" onClick={() => login()}>
+            Reconnecter Spotify
+          </button>
+        </div>
+      )}
+
       {(store.error || store.notice) && (
         <div className={store.error ? 'banner error' : 'banner'} role="status">
           <span>{store.error ?? store.notice}</span>
@@ -104,6 +117,8 @@ function Shell() {
       <main className="content">
         {!store.ready ? (
           <p className="muted">Chargement…</p>
+        ) : tab === 'settings' ? (
+          <SettingsPage />
         ) : !store.library || !store.index ? (
           <div className="empty">
             <h2>Aucune bibliothèque chargée</h2>
@@ -117,13 +132,30 @@ function Shell() {
         ) : (
           <>
             {tab === 'dashboard' && <Dashboard onOpenRule={openInBuilder} />}
-            {tab === 'suggestions' && <Suggestions onCustomize={openInBuilder} />}
-            {tab === 'builder' && <Builder initialRule={draft} key={draft?.seed ?? 'new'} />}
-            {tab === 'mine' && <MyPlaylists onEdit={openInBuilder} />}
-            {tab === 'settings' && <SettingsPage />}
+            {tab === 'history' && <History />}
+            {tab === 'playlists' && (
+              <>
+                <SubTabs
+                  tabs={[
+                    { id: 'suggestions', label: 'Suggestions' },
+                    { id: 'builder', label: 'Créateur' },
+                    { id: 'mine', label: 'Playlists vivantes', badge: store.saved.length },
+                  ]}
+                  value={playlistView}
+                  onChange={setPlaylistView}
+                />
+                {playlistView === 'suggestions' && <Suggestions onCustomize={openInBuilder} />}
+                {playlistView === 'builder' && <Builder initialRule={draft} key={draft?.seed ?? 'new'} />}
+                {playlistView === 'mine' && <MyPlaylists onEdit={openInBuilder} />}
+              </>
+            )}
+            {tab === 'discover' && <Discover />}
+            {tab === 'tidy' && <Tidy />}
+            {tab === 'friends' && <Friends />}
           </>
         )}
       </main>
+      <PlayerBar />
     </div>
   );
 }

@@ -73,8 +73,8 @@ export default function Welcome({ error }: { error: string | null }) {
           {busy ? 'Redirection…' : 'Se connecter avec Spotify'}
         </button>
         <p className="fine">
-          Tout reste dans ton navigateur : pas de serveur, pas de compte. Sillon lit ta bibliothèque et crée des
-          playlists privées ; il ne supprime jamais rien.
+          Tout reste dans ton navigateur : pas de serveur, pas de compte. Sillon crée des playlists privées et ne modifie
+          une playlist existante qu’à ta demande, après l’avoir sauvegardée.
         </p>
       </div>
     </div>
