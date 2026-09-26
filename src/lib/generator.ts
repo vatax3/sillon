@@ -2,7 +2,7 @@ import { FAMILY_BY_ID } from './genres';
 import type { EnrichedTrack, LibraryIndex } from './indexer';
 import { MOOD_BY_ID } from './moods';
 import { sortTracks, SORT_LABELS } from './ordering';
-import type { AudioFeatures, Range, Rule } from './types';
+import type { AudioFeatures, Range, Rule, SavedPlaylist } from './types';
 
 export const defaultRule = (): Rule => ({
   families: [],
@@ -130,6 +130,18 @@ export function generate(index: LibraryIndex, rule: Rule, pool?: Set<string>): G
     : capPerArtist(selectionOrder, rule.maxPerArtist, room);
   const tracks = sortTracks([...pinned, ...picked], rule.sort, rule.seed);
   return { tracks, matchedCount: matched.length + pinned.length, missingFeatures: filtered.missingFeatures };
+}
+
+/**
+ * Nouveau tirage d'une playlist vivante : génère selon la recette (nouvelle graine), en gardant
+ * les titres épinglés absents de la bibliothèque (ajoutés depuis la recherche Spotify).
+ */
+export function livingRefresh(index: LibraryIndex, saved: SavedPlaylist, seed = Math.floor(Math.random() * 1e9)): { rule: Rule; uris: string[] } {
+  const rule = { ...saved.rule, seed };
+  const { tracks } = generate(index, rule, saved.pool ? new Set(saved.pool) : undefined);
+  const banned = new Set(rule.excluded ?? []);
+  const extra = (rule.pinned ?? []).filter((id) => !index.byId.has(id) && !banned.has(id)).map((id) => `spotify:track:${id}`);
+  return { rule, uris: [...tracks.map((t) => t.track.uri), ...extra] };
 }
 
 // ---------- Nom et description automatiques ----------

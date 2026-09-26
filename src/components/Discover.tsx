@@ -1,10 +1,9 @@
 import { useMemo, useRef, useState } from 'react';
 import { fetchAudioFeatures, normalizeName } from '../lib/enrich';
-import { nameKey } from '../lib/history';
 import { computeHistoryStats } from '../lib/historyStats';
 import { isAbort } from '../lib/http';
 import { radarArtists, releaseRadar, type Release } from '../lib/radar';
-import { artistEssentials, featureCentroid, rankBySound, recommend, type Recommendation, type Seed } from '../lib/recommend';
+import { artistEssentials, featureCentroid, knownSets, rankBySound, recommend, seedsFor, type Recommendation, type Seed } from '../lib/recommend';
 import * as sp from '../lib/spotify';
 import type { AudioFeatures, FeatureStore } from '../lib/types';
 import { useStore } from '../store';
@@ -86,22 +85,7 @@ function JobProgress({ job }: { job: ReturnType<typeof useJob> }) {
 
 function useKnown() {
   const { library, history } = useStore();
-  return useMemo(() => {
-    const artists = new Set<string>();
-    const tracks = new Set<string>();
-    const ids = new Set<string>();
-    for (const a of Object.values(library?.artists ?? {})) artists.add(normalizeName(a.name));
-    for (const t of Object.values(library?.tracks ?? {})) {
-      ids.add(t.id);
-      tracks.add(nameKey(t.artists[0]?.name ?? '', t.name));
-    }
-    for (const t of history?.tracks ?? []) {
-      artists.add(normalizeName(t.artist));
-      tracks.add(nameKey(t.artist, t.name));
-      if (!t.key.startsWith('n:')) ids.add(t.key);
-    }
-    return { artists, tracks, ids };
-  }, [library, history]);
+  return useMemo(() => knownSets(library, history), [library, history]);
 }
 
 // ---------- Recommandations ----------
@@ -129,27 +113,8 @@ function Recommendations() {
   );
 
   const seeds = (): { seeds: Seed[]; label: string; centroid?: ReturnType<typeof featureCentroid> } => {
-    const artists = Object.values(library!.artists);
-    const fromTop = (range: 'short_term' | 'medium_term' | 'long_term') =>
-      artists.filter((a) => a.topRanks[range]).sort((a, b) => a.topRanks[range]! - b.topRanks[range]!).map((a) => ({ name: a.name, weight: 1 - (a.topRanks[range]! - 1) / 60 }));
-    const fromHistory = (days: number) => {
-      if (!history?.ts.length) return [];
-      const s = computeHistoryStats(history, { from: days ? Date.now() - days * 86_400_000 : 0, to: Infinity });
-      const max = s.topArtists[0]?.ms || 1;
-      return s.topArtists.slice(0, 10).map((a) => ({ name: a.key, weight: a.ms / max }));
-    };
-    const merge = (lists: Seed[][], n: number) => {
-      const m = new Map<string, Seed>();
-      for (const s of lists.flat()) {
-        const k = normalizeName(s.name);
-        const e = m.get(k);
-        if (e) e.weight += s.weight;
-        else m.set(k, { ...s });
-      }
-      return [...m.values()].sort((a, b) => b.weight - a.weight).slice(0, n);
-    };
-    if (mode === 'recent') return { seeds: merge([fromTop('short_term'), fromHistory(30)], 10), label: 'd’après tes écoutes récentes' };
-    if (mode === 'alltime') return { seeds: merge([fromTop('long_term'), fromHistory(0)], 10), label: 'd’après tes favoris de toujours' };
+    if (mode === 'recent') return { seeds: seedsFor(library!, history, 'recent'), label: 'd’après tes écoutes récentes' };
+    if (mode === 'alltime') return { seeds: seedsFor(library!, history, 'alltime'), label: 'd’après tes favoris de toujours' };
     if (mode === 'artists') return { seeds: artistIds.slice(0, 8).map((id) => ({ name: store.artistName(id), weight: 1 })), label: `autour de ${artistIds.map(store.artistName).join(', ')}` };
     const ids = library!.playlistItems?.[playlistId] ?? [];
     const counts = new Map<string, number>();

@@ -59,6 +59,7 @@ export default function SettingsPage() {
           </button>
         </div>
         <p className="muted small">Après ajout d’une clé, relance l’enrichissement : les artistes restés sans genre seront retentés.</p>
+        {store.server?.lastfm && !store.settings.lastfmKey && <p className="success small">Le serveur fournit déjà une clé Last.fm (LASTFM_API_KEY).</p>}
       </section>
 
       <section className="panel">
@@ -71,6 +72,7 @@ export default function SettingsPage() {
           <input type="checkbox" checked={store.settings.publicByDefault} onChange={(e) => store.updateSettings({ publicByDefault: e.target.checked })} />
           Créer les playlists en public par défaut
         </label>
+        {!store.server && (
         <label className="field">
           <span>Actualiser automatiquement les playlists vivantes à l’ouverture de l’app</span>
           <select value={store.settings.autoRefreshDays} onChange={(e) => store.updateSettings({ autoRefreshDays: Number(e.target.value) })}>
@@ -80,8 +82,29 @@ export default function SettingsPage() {
             <option value={30}>Si elles ont plus d’un mois</option>
           </select>
         </label>
+        )}
       </section>
 
+      {store.server && (
+        <section className="panel">
+          <h3>Serveur</h3>
+          <p className="muted small">
+            Sillon {store.server.version} auto-hébergé sur {new URL(store.server.baseUrl).host} · fuseau {store.server.timezone}. Tes données
+            sont sur le serveur et synchronisées entre tous tes appareils ; les tâches planifiées sont dans l’onglet Automatisations.
+          </p>
+          <div className="row wrap">
+            <a className="button ghost" href="/api/export">
+              Télécharger un export complet
+            </a>
+          </div>
+          <label className="check">
+            <input type="checkbox" checked={!!store.settings.shareOnServer} onChange={(e) => store.updateSettings({ shareOnServer: e.target.checked })} />
+            Partager ma carte de goûts avec les autres comptes de ce serveur (onglet Amis)
+          </label>
+        </section>
+      )}
+
+      {!store.server && (
       <section className="panel">
         <h3>Enregistrement continu des écoutes (optionnel)</h3>
         <p className="muted small">
@@ -105,6 +128,7 @@ export default function SettingsPage() {
           </AsyncButton>
         </div>
       </section>
+      )}
 
       <section className="panel">
         <h3>Historique d’écoute</h3>
@@ -132,12 +156,12 @@ export default function SettingsPage() {
 
       <section className="panel">
         <h3>Données</h3>
-        <p className="muted small">Tout est stocké localement dans ce navigateur (IndexedDB).</p>
+        <p className="muted small">{store.server ? 'Tout est stocké sur ton serveur (SQLite, volume /data).' : 'Tout est stocké localement dans ce navigateur (IndexedDB).'}</p>
         <div className="row wrap">
           <button className="ghost" onClick={exportCsv} disabled={!store.index}>
             Exporter ma bibliothèque (CSV)
           </button>
-          {confirmReset ? (
+          {store.server ? null : confirmReset ? (
             <>
               <button className="danger" onClick={() => store.resetAll().then(() => setConfirmReset(false))}>
                 Confirmer : tout effacer

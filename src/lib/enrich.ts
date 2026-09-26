@@ -2,7 +2,7 @@
 // On les reconstruit à partir de services ouverts, avec cache persistant :
 // - ReccoBeats : audio-features au format Spotify, par ID Spotify, sans clé.
 // - Last.fm (clé gratuite, rapide) puis MusicBrainz (sans clé, 1 req/s) : tags d'artistes.
-import { chunk, fetchWithRetry, isAbort, throttledEach } from './http';
+import { chunk, fetchWithRetry, isAbort, serverHeaders, throttledEach } from './http';
 import type { Artist, ArtistTags, AudioFeatures, FeatureStore, TagStore } from './types';
 
 export interface EnrichProgress {
@@ -28,7 +28,7 @@ export async function fetchAudioFeatures(
   await throttledEach(
     batches,
     async (ids) => {
-      const res = await fetchWithRetry(`${RECCO}?ids=${ids.join(',')}`, { signal });
+      const res = await fetchWithRetry(`${RECCO}?ids=${ids.join(',')}`, { signal, headers: serverHeaders() });
       if (!res.ok) throw new Error(`ReccoBeats : ${res.status}`);
       const json: { content: (AudioFeatures & { href: string })[] } = await res.json();
       const patch: FeatureStore = Object.fromEntries(ids.map((id) => [id, null]));
@@ -74,7 +74,7 @@ async function lastfmTags(name: string, apiKey: string, signal?: AbortSignal): P
     api_key: apiKey,
     format: 'json',
   });
-  const res = await fetchWithRetry(`https://ws.audioscrobbler.com/2.0/?${params}`, { signal }, { retries: 2 });
+  const res = await fetchWithRetry(`https://ws.audioscrobbler.com/2.0/?${params}`, { signal, headers: serverHeaders() }, { retries: 2 });
   const json = await res.json();
   if (json.error === 10 || json.error === 26) throw new Error('Clé Last.fm invalide');
   if (json.error === 6) return null; // artiste inconnu
@@ -87,7 +87,7 @@ async function musicbrainzTags(name: string, signal?: AbortSignal): Promise<stri
   const query = `artist:"${name.replace(/"/g, '')}"`;
   const res = await fetchWithRetry(
     `https://musicbrainz.org/ws/2/artist/?query=${encodeURIComponent(query)}&limit=5&fmt=json`,
-    { signal },
+    { signal, headers: serverHeaders() },
     { retries: 2 },
   );
   if (!res.ok) throw new Error(`MusicBrainz ${res.status}`); // transitoire : retenté plus tard

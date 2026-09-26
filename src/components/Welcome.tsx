@@ -1,7 +1,36 @@
 import { useState } from 'react';
 import { getClientId, getRedirectUri, login, setClientId } from '../lib/auth';
+import { serverLogin, type ServerConfig } from '../lib/remote';
 
-export default function Welcome({ error }: { error: string | null }) {
+export default function Welcome({ error, server }: { error: string | null; server: ServerConfig | null }) {
+  if (server) return <ServerWelcome error={error} server={server} />;
+  return <LocalWelcome error={error} />;
+}
+
+/** Mode serveur : tout est déjà configuré, il suffit de se connecter. */
+function ServerWelcome({ error, server }: { error: string | null; server: ServerConfig }) {
+  return (
+    <div className="welcome">
+      <div className="welcome-card">
+        <div className="brand big">
+          <span className="logo" aria-hidden />
+          Sillon
+        </div>
+        <p className="lead">Ton compagnon Spotify auto-hébergé : analyse, playlists automatiques, historique d’écoute continu.</p>
+        {error && <p className="error-text">{error}</p>}
+        <button className="primary wide" onClick={serverLogin}>
+          Se connecter avec Spotify
+        </button>
+        <p className="fine">
+          Serveur {server.version} · {new URL(server.baseUrl).host}. Ton compte doit être ajouté dans « User Management » de l’app Spotify
+          utilisée par ce serveur.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function LocalWelcome({ error }: { error: string | null }) {
   const [clientId, setId] = useState(getClientId());
   const [busy, setBusy] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);

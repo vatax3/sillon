@@ -1,9 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { logout as clearTokens, missingScopes } from './lib/auth';
-import { kvClear, kvGet, kvSet } from './lib/db';
+import { withDefaults, type Automations, type JobKind, type Schedule } from './lib/automations';
+import { localPersistence, serverPersistence } from './lib/persistence';
+import * as remote from './lib/remote';
+import { SCOPES } from './lib/scopes';
 import { applyManualEdits } from './lib/editor';
 import { fetchArtistTags, fetchAudioFeatures } from './lib/enrich';
-import { generate } from './lib/generator';
+import { livingRefresh } from './lib/generator';
 import { emptyHistory, mergePlays, playsFromApi, readExportFiles, type HistoryStore, type RawPlay } from './lib/history';
 import { mostPlayedIds } from './lib/historyStats';
 import { HttpError, isAbort } from './lib/http';
@@ -19,6 +22,8 @@ export interface TaskState {
   label: string;
   done: number;
   total?: number;
+  /** Mode serveur : exécution suivie (annulable). */
+  serverRunId?: number;
 }
 
 interface Store {
@@ -72,6 +77,13 @@ interface Store {
   dismiss: () => void;
   resetAll: () => Promise<void>;
   logout: () => void;
+  // ---- Mode serveur ----
+  server: remote.ServerConfig | null;
+  automations: Automations;
+  updateAutomations: (fn: (a: Automations) => Automations) => void;
+  serverJobs: remote.JobsState | null;
+  runServerJob: (kind: JobKind, target?: string) => Promise<void>;
+  setLivingSchedule: (playlistId: string, schedule: Schedule | null) => void;
 }
 
 export interface PlaylistEdit {
@@ -111,7 +123,8 @@ function loadSettings(): Settings {
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-export function StoreProvider({ children, onLogout }: { children: ReactNode; onLogout: () => void }) {
+export function StoreProvider({ children, onLogout, server = null }: { children: ReactNode; onLogout: () => void; server?: remote.ServerConfig | null }) {
+  const persist = useMemo(() => (server ? serverPersistence() : localPersistence), [server]);
   const [ready, setReady] = useState(false);
   const [library, setLibraryState] = useState<Library | null>(null);
   const [tags, setTags] = useState<TagStore>({});
@@ -126,6 +139,9 @@ export function StoreProvider({ children, onLogout }: { children: ReactNode; onL
   const [notice, setNotice] = useState<string | null>(null);
   const [playerTick, setPlayerTick] = useState(0);
   const [editRequest, setEditRequest] = useState<Store['editRequest']>(null);
+  const [automations, setAutomations] = useState<Automations>(withDefaults(undefined));
+  const [serverJobs, setServerJobs] = useState<remote.JobsState | null>(null);
+  const [serverScope, setServerScope] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   // Références à jour pour les actions asynchrones enchaînées (évite les closures périmées).
   const libRef = useRef<Library | null>(null);
@@ -135,55 +151,144 @@ export function StoreProvider({ children, onLogout }: { children: ReactNode; onL
     libRef.current = lib;
     setLibraryState(lib);
   };
-  const commitLibrary = (lib: Library) => {
-    setLibrary(lib);
-    void kvSet('library', lib);
-  };
-  const commitHistory = (h: HistoryStore | null) => {
+  const setHistoryState = (h: HistoryStore | null) => {
     historyRef.current = h;
     setHistory(h);
-    void kvSet('history', h);
+  };
+
+  // Setters par document : utilisés quand le serveur impose sa version ou qu'un autre appareil a écrit.
+  const setters: Record<string, (v: never) => void> = {
+    library: (v: Library | undefined) => setLibrary(v ?? null),
+    tags: (v: TagStore | undefined) => setTags(v ?? {}),
+    features: (v: FeatureStore | undefined) => setFeatures(v ?? {}),
+    saved: (v: SavedPlaylist[] | undefined) => setSaved(v ?? []),
+    history: (v: HistoryStore | undefined) => setHistoryState(v ?? null),
+    backups: (v: PlaylistBackup[] | undefined) => setBackups(v ?? []),
+    friends: (v: TasteCard[] | undefined) => setFriends(v ?? []),
+    settings: (v: Partial<Settings> | undefined) => setSettings({ ...DEFAULT_SETTINGS, ...(v ?? {}) }),
+    automations: (v: Partial<Automations> | undefined) => setAutomations(withDefaults(v)),
+  };
+
+  const save = <T,>(key: string, value: T, rebase?: (fresh: T | undefined) => T) => {
+    persist
+      .save(key, value, rebase)
+      .then((r) => {
+        if (r.replaced !== undefined) (setters[key] as (v: T) => void)?.(r.replaced);
+      })
+      .catch((e) => setError(message(e)));
+  };
+
+  const commitLibrary = (lib: Library, rebase?: (fresh: Library | undefined) => Library) => {
+    setLibrary(lib);
+    save('library', lib, rebase);
+  };
+  const commitHistory = (h: HistoryStore | null) => {
+    setHistoryState(h);
+    // En mode serveur, l'historique appartient au serveur (import et relève passent par l'API).
+    if (!persist.server) save('history', h);
   };
 
   useEffect(() => {
-    Promise.all([
-      kvGet<Library>('library'),
-      kvGet<TagStore>('tags'),
-      kvGet<FeatureStore>('features'),
-      kvGet<SavedPlaylist[]>('saved'),
-      kvGet<HistoryStore>('history'),
-      kvGet<PlaylistBackup[]>('backups'),
-      kvGet<TasteCard[]>('friends'),
-    ]).then(([l, t, f, s, h, b, fr]) => {
-      setLibrary(l ?? null);
-      setTags(t ?? {});
-      setFeatures(f ?? {});
-      setSaved(s ?? []);
-      historyRef.current = h ?? null;
-      setHistory(h ?? null);
-      setBackups(b ?? []);
-      setFriends(fr ?? []);
-      setReady(true);
-    });
-  }, []);
+    const keys = ['library', 'tags', 'features', 'saved', 'history', 'backups', 'friends', ...(persist.server ? ['settings', 'automations'] : [])];
+    Promise.all(keys.map((k) => persist.load(k)))
+      .then((values) => {
+        keys.forEach((k, i) => (setters[k] as (v: unknown) => void)(values[i]));
+        setReady(true);
+      })
+      .catch((e) => {
+        setError(`Chargement impossible : ${message(e)}`);
+        setReady(true);
+      });
+  }, [persist]);
+
+  // Mode serveur : on récupère ce que les tâches planifiées ou les autres appareils ont modifié.
+  const reloadChanged = useCallback(async () => {
+    if (!persist.server) return;
+    try {
+      for (const key of await persist.changedKeys()) {
+        if (setters[key]) (setters[key] as (v: unknown) => void)(await persist.load(key));
+      }
+    } catch {
+      /* hors ligne : on réessaiera */
+    }
+  }, [persist]);
+
+  useEffect(() => {
+    if (!persist.server) return;
+    const t = setInterval(reloadChanged, 20_000);
+    const onFocus = () => void reloadChanged();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [reloadChanged]);
+
+  // Mode serveur : suivi des tâches (rapide pendant qu'une tâche tourne).
+  const jobsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollJobs = useCallback(async () => {
+    if (!persist.server) return;
+    if (jobsTimer.current) clearTimeout(jobsTimer.current);
+    let busy = false;
+    try {
+      const j = await remote.jobs();
+      busy = j.running.length > 0;
+      setServerJobs((prev) => {
+        // Une tâche vient de se terminer : ses résultats sont à recharger.
+        if (prev && prev.running.length > j.running.length) void reloadChanged();
+        return j;
+      });
+    } catch {
+      /* réessai au prochain tour */
+    }
+    jobsTimer.current = setTimeout(pollJobs, busy ? 2500 : 30_000);
+  }, [persist, reloadChanged]);
+
+  useEffect(() => {
+    void pollJobs();
+    return () => {
+      if (jobsTimer.current) clearTimeout(jobsTimer.current);
+    };
+  }, [pollJobs]);
+
+  useEffect(() => {
+    if (!server) return;
+    remote.serverToken().then(() => setServerScope(remote.serverScope())).catch(() => undefined);
+  }, [server]);
+
+  const runServerJob = async (kind: JobKind, target?: string) => {
+    await remote.runJob(kind, target);
+    setTimeout(pollJobs, 400);
+  };
 
   const index = useMemo(() => (library ? buildIndex(library, tags, features, history) : null), [library, tags, features, history]);
   const artistName = useCallback((id: string) => library?.artists[id]?.name ?? id, [library]);
 
+  // Mises à jour fonctionnelles : réappliquées telles quelles si le serveur a une version plus récente.
   const updateSaved = (fn: (prev: SavedPlaylist[]) => SavedPlaylist[]) =>
     setSaved((prev) => {
       const next = fn(prev);
-      void kvSet('saved', next);
+      save('saved', next, (fresh) => fn(fresh ?? []));
       return next;
     });
 
+  const addBackup = (list: PlaylistBackup[], b: PlaylistBackup) => (list[0] && sameSnapshot(list[0], b) ? list : [b, ...list].slice(0, MAX_BACKUPS));
   const pushBackup = (b: PlaylistBackup) =>
     setBackups((prev) => {
-      if (prev[0] && sameSnapshot(prev[0], b)) return prev;
-      const next = [b, ...prev].slice(0, MAX_BACKUPS);
-      void kvSet('backups', next);
+      const next = addBackup(prev, b);
+      if (next !== prev) save('backups', next, (fresh) => addBackup(fresh ?? [], b));
       return next;
     });
+
+  const updateAutomations = (fn: (a: Automations) => Automations) =>
+    setAutomations((prev) => {
+      const next = fn(prev);
+      save('automations', next, (fresh) => fn(withDefaults(fresh)));
+      return next;
+    });
+
+  const setLivingSchedule = (playlistId: string, sched: Schedule | null) =>
+    updateSaved((prev) => prev.map((s) => (s.spotifyId === playlistId ? { ...s, schedule: sched } : s)));
 
   const run = async (kind: TaskState['kind'], fn: (signal: AbortSignal) => Promise<void>) => {
     abortRef.current?.abort();
@@ -211,7 +316,7 @@ export function StoreProvider({ children, onLogout }: { children: ReactNode; onL
   };
 
   const pullWorker = async (quiet = false): Promise<number> => {
-    if (!settings.workerUrl || !settings.workerKey) return 0;
+    if (persist.server || !settings.workerUrl || !settings.workerKey) return 0;
     try {
       const since = historyRef.current?.ts.length ? historyRef.current.ts[historyRef.current.ts.length - 1] - 7 * 86_400_000 : 0;
       const res = await fetch(`${settings.workerUrl.replace(/\/$/, '')}/plays?since=${Math.floor(since)}`, {
@@ -231,7 +336,7 @@ export function StoreProvider({ children, onLogout }: { children: ReactNode; onL
   };
 
   const sync = () =>
-    run('sync', async (signal) => {
+    persist.server ? runServerJob('sync').catch((e) => setError(message(e))) : run('sync', async (signal) => {
       const lib = await syncLibrary(
         { excludePlaylistIds: new Set(saved.map((s) => s.spotifyId)) },
         (p) => setTask({ kind: 'sync', ...p }),
@@ -246,7 +351,7 @@ export function StoreProvider({ children, onLogout }: { children: ReactNode; onL
     });
 
   const enrich = () =>
-    run('enrich', async (signal) => {
+    persist.server ? runServerJob('enrich').catch((e) => setError(message(e))) : run('enrich', async (signal) => {
       if (!library) return;
       const f: FeatureStore = { ...features };
       const t: TagStore = { ...tags };
@@ -256,8 +361,8 @@ export function StoreProvider({ children, onLogout }: { children: ReactNode; onL
         lastFlush = Date.now();
         setFeatures({ ...f });
         setTags({ ...t });
-        void kvSet('features', f);
-        void kvSet('tags', t);
+        save('features', f);
+        save('tags', t);
       };
       try {
         // Bibliothèque d'abord, puis les titres les plus écoutés de l'historique (humeur × moment).
@@ -292,6 +397,8 @@ export function StoreProvider({ children, onLogout }: { children: ReactNode; onL
     });
 
   const cancel = () => {
+    const serverRun = serverJobs?.running[0];
+    if (persist.server && serverRun) void remote.cancelRun(serverRun).then(() => setTimeout(pollJobs, 400));
     abortRef.current?.abort();
     abortRef.current = null;
     setTask(null);
@@ -325,24 +432,19 @@ export function StoreProvider({ children, onLogout }: { children: ReactNode; onL
 
   const refreshSaved = async (s: SavedPlaylist) => {
     if (!index) return;
-    const rule = { ...s.rule, seed: Math.floor(Math.random() * 1e9) };
-    const { tracks } = generate(index, rule, s.pool ? new Set(s.pool) : undefined);
-    // Les titres épinglés absents de la bibliothèque (ajoutés depuis la recherche Spotify) restent inclus.
-    const banned = new Set(rule.excluded ?? []);
-    const extra = (rule.pinned ?? []).filter((id) => !index.byId.has(id) && !banned.has(id)).map((id) => `spotify:track:${id}`);
-    await sp.setPlaylistItems(s.spotifyId, [...tracks.map((t) => t.track.uri), ...extra]);
+    const { rule, uris } = livingRefresh(index, s);
+    await sp.setPlaylistItems(s.spotifyId, uris);
     updateSaved((prev) =>
-      prev.map((x) =>
-        x.spotifyId === s.spotifyId ? { ...x, rule, updatedAt: new Date().toISOString(), trackCount: tracks.length } : x,
-      ),
+      prev.map((x) => (x.spotifyId === s.spotifyId ? { ...x, rule, updatedAt: new Date().toISOString(), trackCount: uris.length } : x)),
     );
-    setNotice(`« ${s.name} » actualisée (${tracks.length} titres).`);
+    setNotice(`« ${s.name} » actualisée (${uris.length} titres).`);
   };
 
   // Actualisation automatique des playlists vivantes à l'ouverture.
   const autoRefreshed = useRef(false);
   useEffect(() => {
-    if (!ready || !index || autoRefreshed.current || !settings.autoRefreshDays) return;
+    // En mode serveur, c'est le planificateur qui s'en charge.
+    if (persist.server || !ready || !index || autoRefreshed.current || !settings.autoRefreshDays) return;
     autoRefreshed.current = true;
     const limit = Date.now() - settings.autoRefreshDays * 86_400_000;
     const stale = saved.filter((s) => Date.parse(s.updatedAt) < limit);
@@ -375,9 +477,12 @@ export function StoreProvider({ children, onLogout }: { children: ReactNode; onL
   const patchLibrary = (fn: (lib: Library) => void) => {
     const current = libRef.current;
     if (!current) return;
-    const next: Library = structuredClone(current);
-    fn(next);
-    commitLibrary(next);
+    const apply = (base: Library) => {
+      const next: Library = structuredClone(base);
+      fn(next);
+      return next;
+    };
+    commitLibrary(apply(current), (fresh) => apply(fresh ?? current));
   };
 
   const likeTracks = async (trackIds: string[]) => {
@@ -430,7 +535,7 @@ export function StoreProvider({ children, onLogout }: { children: ReactNode; onL
     const b = snapshot(lib);
     setBackups((prev) => {
       const next = [b, ...prev].slice(0, MAX_BACKUPS);
-      void kvSet('backups', next);
+      save('backups', next, (fresh) => [b, ...(fresh ?? [])].slice(0, MAX_BACKUPS));
       return next;
     });
     setNotice('Sauvegarde créée.');
@@ -504,27 +609,32 @@ export function StoreProvider({ children, onLogout }: { children: ReactNode; onL
 
   const importHistory = async (files: FileList | File[]) => {
     const { plays, names, skipped } = await readExportFiles(files);
+    if (persist.server) {
+      const { added } = await remote.importPlays(plays, names);
+      setters.history((await persist.load<HistoryStore>('history')) as never);
+      setNotice(`${added.toLocaleString('fr-FR')} écoutes importées sur le serveur depuis ${names.length} fichier(s).`);
+      return { added, skipped };
+    }
     const added = mergeIntoHistory(plays, names);
     setNotice(`${added.toLocaleString('fr-FR')} écoutes importées depuis ${names.length} fichier(s).`);
     return { added, skipped };
   };
 
-  const clearHistory = async () => commitHistory(null);
+  const clearHistory = async () => {
+    if (persist.server) await remote.clearServerHistory();
+    commitHistory(null);
+  };
 
   // ---- Amis ----
 
-  const addFriend = (card: TasteCard) =>
+  const updateFriends = (fn: (prev: TasteCard[]) => TasteCard[]) =>
     setFriends((prev) => {
-      const next = [card, ...prev.filter((f) => f.name !== card.name)];
-      void kvSet('friends', next);
+      const next = fn(prev);
+      save('friends', next, (fresh) => fn(fresh ?? []));
       return next;
     });
-  const removeFriend = (name: string, createdAt: string) =>
-    setFriends((prev) => {
-      const next = prev.filter((f) => !(f.name === name && f.createdAt === createdAt));
-      void kvSet('friends', next);
-      return next;
-    });
+  const addFriend = (card: TasteCard) => updateFriends((prev) => [card, ...prev.filter((f) => f.name !== card.name)]);
+  const removeFriend = (name: string, createdAt: string) => updateFriends((prev) => prev.filter((f) => !(f.name === name && f.createdAt === createdAt)));
 
   // ---- Lecteur ----
 
@@ -548,12 +658,14 @@ export function StoreProvider({ children, onLogout }: { children: ReactNode; onL
   const updateSettings = (patch: Partial<Settings>) => {
     const next = { ...settings, ...patch };
     setSettings(next);
-    localStorage.setItem(K_SETTINGS, JSON.stringify(next));
+    // Mode serveur : réglages partagés entre appareils et lus par les tâches planifiées.
+    if (persist.server) save('settings', next, (fresh) => ({ ...DEFAULT_SETTINGS, ...(fresh ?? {}), ...patch }));
+    else localStorage.setItem(K_SETTINGS, JSON.stringify(next));
   };
 
   const resetAll = async () => {
     cancel();
-    await kvClear();
+    await persist.clear();
     setLibrary(null);
     setTags({});
     setFeatures({});
@@ -565,9 +677,30 @@ export function StoreProvider({ children, onLogout }: { children: ReactNode; onL
 
   const logout = () => {
     cancel();
-    clearTokens();
-    onLogout();
+    if (persist.server) void remote.serverLogout().then(onLogout);
+    else {
+      clearTokens();
+      onLogout();
+    }
   };
+
+  // Tâche serveur en cours → affichée comme une tâche locale dans la barre d'état.
+  const serverTask = useMemo<TaskState | null>(() => {
+    const id = serverJobs?.running[0];
+    const run = id ? serverJobs?.runs.find((r) => r.id === id) : undefined;
+    if (!run) return null;
+    return {
+      kind: run.kind === 'enrich' ? 'enrich' : 'sync',
+      label: run.progress?.label ?? `Serveur : ${run.kind === 'sync' ? 'synchro' : run.kind}…`,
+      done: run.progress?.done ?? 0,
+      total: run.progress?.total,
+      serverRunId: run.id,
+    };
+  }, [serverJobs]);
+
+  const needsReauth = server
+    ? !!server.user?.needsReauth || (serverScope !== null && SCOPES.some((sc) => !serverScope.split(' ').includes(sc)))
+    : missingScopes().length > 0;
 
   const value: Store = {
     ready,
@@ -580,10 +713,10 @@ export function StoreProvider({ children, onLogout }: { children: ReactNode; onL
     backups,
     friends,
     settings,
-    task,
+    task: task ?? serverTask,
     error,
     notice,
-    needsReauth: missingScopes().length > 0,
+    needsReauth,
     playerTick,
     artistName,
     sync,
@@ -621,6 +754,12 @@ export function StoreProvider({ children, onLogout }: { children: ReactNode; onL
     },
     resetAll,
     logout,
+    server,
+    automations,
+    updateAutomations,
+    serverJobs,
+    runServerJob,
+    setLivingSchedule,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

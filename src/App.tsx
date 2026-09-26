@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import AutomationsPage from './components/Automations';
 import Builder from './components/Builder';
 import Dashboard from './components/Dashboard';
 import Discover from './components/Discover';
@@ -13,39 +14,43 @@ import Tidy from './components/Tidy';
 import { SubTabs } from './components/ui';
 import Welcome from './components/Welcome';
 import { handleCallback, isLoggedIn, login } from './lib/auth';
+import { serverLogin, type ServerConfig } from './lib/remote';
 import type { Rule } from './lib/types';
 import { StoreProvider, useStore } from './store';
 
-type Tab = 'dashboard' | 'history' | 'playlists' | 'discover' | 'tidy' | 'friends' | 'settings';
+type Tab = 'dashboard' | 'history' | 'playlists' | 'discover' | 'tidy' | 'friends' | 'auto' | 'settings';
 type PlaylistView = 'suggestions' | 'builder' | 'mine';
 
-const TABS: { id: Tab; label: string }[] = [
+const TABS: { id: Tab; label: string; serverOnly?: boolean }[] = [
   { id: 'dashboard', label: 'Analyse' },
   { id: 'history', label: 'Écoutes' },
   { id: 'playlists', label: 'Playlists' },
   { id: 'discover', label: 'Découvrir' },
   { id: 'tidy', label: 'Ranger' },
   { id: 'friends', label: 'Amis' },
+  { id: 'auto', label: 'Automatisations', serverOnly: true },
   { id: 'settings', label: 'Réglages' },
 ];
 
-export default function App() {
-  const [loggedIn, setLoggedIn] = useState(isLoggedIn);
-  const [authError, setAuthError] = useState<string | null>(null);
+export default function App({ server }: { server: ServerConfig | null }) {
+  const [loggedIn, setLoggedIn] = useState(() => (server ? !!server.user : isLoggedIn()));
+  const [authError, setAuthError] = useState<string | null>(() => new URLSearchParams(location.search).get('authError'));
   const handled = useRef(false);
 
   useEffect(() => {
+    if (authError) history.replaceState(null, '', location.pathname);
+    // Mode serveur : c'est le serveur qui reçoit le retour OAuth.
     // StrictMode monte deux fois en dev : un code OAuth ne s'échange qu'une fois.
-    if (handled.current) return;
+    if (server || handled.current) return;
     handled.current = true;
     handleCallback()
       .then((ok) => ok && setLoggedIn(true))
       .catch((e: Error) => setAuthError(e.message));
   }, []);
 
-  if (!loggedIn) return <Welcome error={authError} />;
+  if (!loggedIn) return <Welcome error={authError} server={server} />;
   return (
-    <StoreProvider onLogout={() => setLoggedIn(false)}>
+    <StoreProvider server={server} onLogout={() => setLoggedIn(false)}>
       <Shell />
     </StoreProvider>
   );
@@ -87,7 +92,7 @@ function Shell() {
           Sillon
         </div>
         <nav className="tabs" role="tablist">
-          {TABS.map((t) => (
+          {TABS.filter((t) => !t.serverOnly || store.server).map((t) => (
             <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? 'tab active' : 'tab'} onClick={() => setTab(t.id)}>
               {t.label}
             </button>
@@ -106,7 +111,7 @@ function Shell() {
       {store.needsReauth && (
         <div className="banner" role="status">
           <span>Sillon a de nouvelles fonctions (liker, suivre, lecteur) qui demandent une autorisation supplémentaire.</span>
-          <button className="primary small" onClick={() => login()}>
+          <button className="primary small" onClick={() => (store.server ? serverLogin() : login())}>
             Reconnecter Spotify
           </button>
         </div>
@@ -126,6 +131,8 @@ function Shell() {
           <p className="muted">Chargement…</p>
         ) : tab === 'settings' ? (
           <SettingsPage />
+        ) : tab === 'auto' ? (
+          <AutomationsPage />
         ) : !store.library || !store.index ? (
           <div className="empty">
             <h2>Aucune bibliothèque chargée</h2>

@@ -2,15 +2,26 @@
 // - pas d'endpoints batch (GET /artists?ids=…), pas d'audio-features, pas de popularité ;
 // - playlists : /me/playlists (création) et /playlists/{id}/items (contenu) ;
 // - le contenu n'est lisible que pour les playlists possédées ou collaboratives.
-import { getAccessToken } from './auth';
 import { chunk, fetchWithRetry, HttpError } from './http';
 import type { TimeRange } from './types';
 
 const BASE = 'https://api.spotify.com/v1';
 
+/** Fournit un jeton d'accès valide ; `force` demande un rafraîchissement (après un 401). */
+export type TokenSource = (force?: boolean) => Promise<string>;
+
+let tokenSource: TokenSource = async () => {
+  throw new Error('Aucune source de jeton Spotify configurée');
+};
+
+/** Navigateur : jeton PKCE local ou fourni par le serveur. Serveur : jeton de l'utilisateur de la tâche en cours. */
+export function setTokenSource(source: TokenSource) {
+  tokenSource = source;
+}
+
 async function authHeaders(force = false): Promise<Record<string, string>> {
   return {
-    Authorization: `Bearer ${await getAccessToken(force)}`,
+    Authorization: `Bearer ${await tokenSource(force)}`,
     'Content-Type': 'application/json',
   };
 }

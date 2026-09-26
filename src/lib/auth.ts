@@ -4,21 +4,8 @@
 const AUTHORIZE_URL = 'https://accounts.spotify.com/authorize';
 const TOKEN_URL = 'https://accounts.spotify.com/api/token';
 
-export const SCOPES = [
-  'user-library-read',
-  'playlist-read-private',
-  'playlist-read-collaborative',
-  'playlist-modify-private',
-  'playlist-modify-public',
-  'user-top-read',
-  'user-read-recently-played',
-  'user-follow-read',
-  'user-follow-modify',
-  'user-library-modify',
-  'user-read-playback-state',
-  'user-modify-playback-state',
-  'user-read-currently-playing',
-];
+export { SCOPES } from './scopes';
+import { SCOPES } from './scopes';
 
 const K_CLIENT = 'sillon.clientId';
 const K_TOKENS = 'sillon.tokens';

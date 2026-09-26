@@ -2,10 +2,10 @@
 // pagination, reprise sur 429, lots de 100 / 40, formats 2026 (items/item), fichiers locaux, erreurs.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('./auth', () => ({ getAccessToken: vi.fn(async () => 'fake-token') }));
-
 import * as sp from './spotify';
 import { syncLibrary } from './sync';
+
+sp.setTokenSource(async () => 'fake-token');
 
 interface Call {
   method: string;

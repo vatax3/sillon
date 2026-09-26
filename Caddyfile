@@ -1,0 +1,4 @@
+# Remplace par ton domaine (enregistrement DNS A/AAAA vers ton serveur).
+sillon.example.com {
+	reverse_proxy sillon:8080
+}

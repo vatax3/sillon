@@ -1,7 +1,7 @@
 // L'API publique de Deezer est excellente pour les artistes similaires et fournit des extraits de 30 s,
 // sans clé. Elle n'envoie pas d'en-tête CORS : on passe par son mode JSONP.
 import { normalizeName } from './enrich';
-import { sleep } from './http';
+import { SERVER_USER_AGENT, sleep } from './http';
 
 let counter = 0;
 let lastCall = 0;
@@ -35,7 +35,18 @@ function jsonpOnce<T>(url: string, timeout = 12_000): Promise<T> {
   });
 }
 
+/** Côté serveur, pas de contrainte CORS : un simple fetch suffit. */
+async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(url, { signal, headers: { 'User-Agent': SERVER_USER_AGENT } });
+  if (!res.ok) throw new Error(`Deezer : ${res.status}`);
+  return (await res.json()) as T;
+}
+
+const inBrowser = typeof document !== 'undefined';
+
+// Borné : un serveur tourne des semaines, le cache ne doit pas grossir indéfiniment.
 const cache = new Map<string, unknown>();
+const CACHE_MAX = 5000;
 
 async function dz<T>(path: string, signal?: AbortSignal): Promise<T> {
   if (cache.has(path)) return cache.get(path) as T;
@@ -43,7 +54,9 @@ async function dz<T>(path: string, signal?: AbortSignal): Promise<T> {
     const wait = lastCall + MIN_INTERVAL - Date.now();
     lastCall = Math.max(Date.now(), lastCall + MIN_INTERVAL);
     if (wait > 0) await sleep(wait, signal);
-    const json = await jsonpOnce<T & { error?: { code: number; message: string } }>(`https://api.deezer.com${path}`);
+    type WithError = T & { error?: { code: number; message: string } };
+    const url = `https://api.deezer.com${path}`;
+    const json = inBrowser ? await jsonpOnce<WithError>(url) : await fetchJson<WithError>(url, signal);
     if (json.error) {
       // Code 4 = quota dépassé : on patiente et on réessaie.
       if (json.error.code === 4 && attempt < 3) {
@@ -52,6 +65,7 @@ async function dz<T>(path: string, signal?: AbortSignal): Promise<T> {
       }
       throw new Error(`Deezer : ${json.error.message}`);
     }
+    if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value!);
     cache.set(path, json);
     return json;
   }

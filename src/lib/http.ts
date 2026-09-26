@@ -1,3 +1,9 @@
+/** Identifiant envoyé par le serveur auto-hébergé (MusicBrainz bloque les clients anonymes). */
+export const SERVER_USER_AGENT = 'Sillon/1.0 (self-hosted; https://github.com/vatax3/sillon)';
+
+/** En-têtes à ajouter côté serveur uniquement (un navigateur refuse de modifier son User-Agent). */
+export const serverHeaders = (): Record<string, string> => (typeof document === 'undefined' ? { 'User-Agent': SERVER_USER_AGENT } : {});
+
 export const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
     if (signal?.aborted) return reject(new DOMException('Aborted', 'AbortError'));

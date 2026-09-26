@@ -1,3 +1,5 @@
+import type { Schedule } from './automations';
+
 export type TimeRange = 'short_term' | 'medium_term' | 'long_term';
 export const TIME_RANGES: TimeRange[] = ['short_term', 'medium_term', 'long_term'];
 
@@ -167,6 +169,8 @@ export interface SavedPlaylist {
   updatedAt: string;
   trackCount: number;
   isPublic: boolean;
+  /** Mode serveur : actualisation automatique (null/absent = manuelle). */
+  schedule?: Schedule | null;
 }
 
 export interface Settings {
@@ -178,6 +182,8 @@ export interface Settings {
   workerKey: string;
   /** Actualise les playlists vivantes à l'ouverture si elles ont plus de N jours (0 = jamais). */
   autoRefreshDays: number;
+  /** Mode serveur : partager sa carte de goûts avec les autres comptes du serveur. */
+  shareOnServer?: boolean;
 }
 
 export interface PlaylistBackup {

@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { serverFriends } from '../lib/remote';
 import { blend, buildTasteCard, compatibility, familyLabel, parseTasteCard, type TasteCard } from '../lib/social';
 import { useStore } from '../store';
 import { AsyncButton, BarChart } from './ui';
@@ -142,6 +143,8 @@ export default function Friends() {
         </div>
       </section>
 
+      {store.server && <ServerFriends me={me} />}
+
       <section className="panel">
         <header>
           <h3>Amis</h3>
@@ -161,7 +164,40 @@ export default function Friends() {
   );
 }
 
-function FriendPanel({ me, them }: { me: TasteCard; them: TasteCard }) {
+/** Mode serveur : les comptes du même serveur qui partagent leur carte, sans échange de fichier. */
+function ServerFriends({ me }: { me: TasteCard }) {
+  const store = useStore();
+  const [cards, setCards] = useState<TasteCard[] | null>(null);
+  useEffect(() => {
+    serverFriends()
+      .then((r) => setCards(r.cards))
+      .catch(store.report);
+  }, []);
+  return (
+    <>
+      <section className="panel">
+        <header>
+          <h3>Sur ce serveur</h3>
+          <label className="check small">
+            <input type="checkbox" checked={!!store.settings.shareOnServer} onChange={(e) => store.updateSettings({ shareOnServer: e.target.checked })} />
+            Partager ma carte avec eux
+          </label>
+        </header>
+        <p className="muted small">
+          {cards === null
+            ? 'Chargement…'
+            : cards.length === 0
+              ? 'Aucun autre compte de ce serveur ne partage sa carte pour l’instant.'
+              : `${cards.length} compte(s) partagent leur carte, toujours à jour.`}
+          {!store.settings.shareOnServer && ' Active le partage pour apparaître aussi chez eux.'}
+        </p>
+      </section>
+      {cards?.map((c) => <FriendPanel key={`srv-${c.name}`} me={me} them={c} live />)}
+    </>
+  );
+}
+
+function FriendPanel({ me, them, live }: { me: TasteCard; them: TasteCard; live?: boolean }) {
   const store = useStore();
   const c = useMemo(() => compatibility(me, them), [me, them]);
   const verdict = c.score >= 75 ? 'Âmes sœurs musicales' : c.score >= 55 ? 'Très compatibles' : c.score >= 35 ? 'Des points communs' : 'Univers différents : plein de choses à se faire découvrir';
@@ -184,9 +220,11 @@ function FriendPanel({ me, them }: { me: TasteCard; them: TasteCard }) {
           >
             Créer notre Blend
           </AsyncButton>
-          <button className="ghost small" onClick={() => store.removeFriend(them.name, them.createdAt)}>
-            Retirer
-          </button>
+          {!live && (
+            <button className="ghost small" onClick={() => store.removeFriend(them.name, them.createdAt)}>
+              Retirer
+            </button>
+          )}
         </span>
       </header>
       <div className="compat">
@@ -211,7 +249,7 @@ function FriendPanel({ me, them }: { me: TasteCard; them: TasteCard }) {
           <p className="small">{c.toShare.join(', ') || '—'}</p>
         </div>
       </div>
-      <p className="muted small">Carte du {new Date(them.createdAt).toLocaleDateString('fr-FR')}</p>
+      <p className="muted small">{live ? 'Compte de ce serveur · carte à jour' : `Carte du ${new Date(them.createdAt).toLocaleDateString('fr-FR')}`}</p>
     </section>
   );
 }

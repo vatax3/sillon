@@ -4,10 +4,11 @@
 // 3. résolution vers Spotify par recherche, pour pouvoir liker / lire / créer une playlist.
 import * as dz from './deezer';
 import { normalizeName } from './enrich';
-import { nameKey } from './history';
+import { nameKey, type HistoryStore } from './history';
+import { computeHistoryStats } from './historyStats';
 import { isAbort, throttledEach } from './http';
 import * as sp from './spotify';
-import type { AudioFeatures } from './types';
+import type { AudioFeatures, Library } from './types';
 
 export interface Seed {
   name: string;
@@ -39,6 +40,49 @@ export interface RecoOptions {
   perArtist: number;
   onProgress?: (label: string, done: number, total: number) => void;
   signal?: AbortSignal;
+}
+
+/**
+ * Artistes de départ : tops Spotify de la période + artistes les plus écoutés de l'historique,
+ * fusionnés et pondérés. `recent` = 30 derniers jours / top court terme ; `alltime` = tout.
+ */
+export function seedsFor(library: Library, history: HistoryStore | null, mode: 'recent' | 'alltime', n = 10): Seed[] {
+  const range = mode === 'recent' ? 'short_term' : 'long_term';
+  const fromTop = Object.values(library.artists)
+    .filter((a) => a.topRanks[range])
+    .map((a) => ({ name: a.name, weight: 1 - (a.topRanks[range]! - 1) / 60 }));
+  let fromHistory: Seed[] = [];
+  if (history?.ts.length) {
+    const s = computeHistoryStats(history, { from: mode === 'recent' ? Date.now() - 30 * 86_400_000 : 0, to: Infinity });
+    const max = s.topArtists[0]?.ms || 1;
+    fromHistory = s.topArtists.slice(0, 10).map((a) => ({ name: a.key, weight: a.ms / max }));
+  }
+  const merged = new Map<string, Seed>();
+  for (const s of [...fromTop, ...fromHistory]) {
+    const k = normalizeName(s.name);
+    const e = merged.get(k);
+    if (e) e.weight += s.weight;
+    else merged.set(k, { ...s });
+  }
+  return [...merged.values()].sort((a, b) => b.weight - a.weight).slice(0, n);
+}
+
+/** Ce que l'utilisateur connaît déjà (bibliothèque + historique), pour ne recommander que du neuf. */
+export function knownSets(library: Library | null, history: HistoryStore | null) {
+  const artists = new Set<string>();
+  const tracks = new Set<string>();
+  const ids = new Set<string>();
+  for (const a of Object.values(library?.artists ?? {})) artists.add(normalizeName(a.name));
+  for (const t of Object.values(library?.tracks ?? {})) {
+    ids.add(t.id);
+    tracks.add(nameKey(t.artists[0]?.name ?? '', t.name));
+  }
+  for (const t of history?.tracks ?? []) {
+    artists.add(normalizeName(t.artist));
+    tracks.add(nameKey(t.artist, t.name));
+    if (!t.key.startsWith('n:')) ids.add(t.key);
+  }
+  return { artists, tracks, ids };
 }
 
 /** Retrouve un titre sur Spotify ; le premier résultat dont l'artiste correspond. */

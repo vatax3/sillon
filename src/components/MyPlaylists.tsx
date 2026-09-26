@@ -3,6 +3,8 @@ import { describeRule } from '../lib/generator';
 import { playlistUrl } from '../lib/spotify';
 import type { Rule } from '../lib/types';
 import { useStore } from '../store';
+import { describeSchedule } from '../lib/automations';
+import { SchedulePicker } from './Automations';
 import PlaylistEditor from './PlaylistEditor';
 
 export default function MyPlaylists({ onEdit }: { onEdit: (r: Rule) => void }) {
@@ -28,7 +30,9 @@ export default function MyPlaylists({ onEdit }: { onEdit: (r: Rule) => void }) {
     if (!s) return;
     setBusy(id);
     try {
-      await store.refreshSaved(s);
+      // En mode serveur, l'actualisation passe par le serveur (même code que la tâche planifiée).
+      if (store.server) await store.runServerJob('living', id);
+      else await store.refreshSaved(s);
     } catch (e) {
       store.report(e);
     } finally {
@@ -79,6 +83,20 @@ export default function MyPlaylists({ onEdit }: { onEdit: (r: Rule) => void }) {
                       {touches ? ` · ${s.rule.pinned?.length ?? 0} épinglé(s), ${s.rule.excluded?.length ?? 0} exclu(s)` : ''} · mise à jour le{' '}
                       {new Date(s.updatedAt).toLocaleDateString('fr-FR')}
                     </span>
+                    {store.server && (
+                      <span className="row small living-auto">
+                        <label className="check">
+                          <input
+                            type="checkbox"
+                            checked={!!s.schedule}
+                            onChange={(e) => store.setLivingSchedule(s.spotifyId, e.target.checked ? { freq: 'weekly', day: 1, hour: 6 } : null)}
+                          />
+                          Actualisation automatique{s.schedule && !store.automations.livingRefresh ? ' (désactivée dans Automatisations)' : ''}
+                        </label>
+                        {s.schedule && <SchedulePicker value={s.schedule} onChange={(sc) => store.setLivingSchedule(s.spotifyId, sc)} />}
+                      </span>
+                    )}
+                    {!store.server && s.schedule && <span className="muted small">Planifiée côté serveur : {describeSchedule(s.schedule)}</span>}
                   </div>
                   <div className="saved-actions">
                     <button className="primary small" onClick={() => refresh(s.spotifyId)} disabled={!!busy}>

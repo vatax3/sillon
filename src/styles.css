@@ -415,3 +415,23 @@ textarea { font: inherit; color: inherit; background: var(--surface); border: 1p
   position: sticky; bottom: calc(76px + env(safe-area-inset-bottom, 0px)); z-index: 5; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; box-shadow: 0 4px 24px rgb(0 0 0 / 0.12);
 }
+
+/* ---------- Automatisations (mode serveur) ---------- */
+.automations { display: flex; flex-direction: column; gap: 16px; }
+.automations > p { margin: 0; }
+.panel.auto { display: flex; flex-direction: column; gap: 10px; opacity: 0.75; }
+.panel.auto.on { opacity: 1; }
+.panel.auto > p { margin: 0; }
+.auto-title h3 { display: inline; }
+.auto-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border-top: 1px solid var(--grid); padding-top: 8px; }
+.schedule { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.living-schedules { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.living-schedules > li { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--grid); border-radius: 8px; padding: 10px; }
+.living-name { font-weight: 600; color: var(--text); text-decoration: none; }
+.living-auto { margin-top: 4px; flex-wrap: wrap; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 4px; }
+.dot.ok { background: var(--good); }
+.dot.error { background: var(--bad); }
+.dot.running { background: var(--accent); animation: pulse 1s infinite alternate; }
+@keyframes pulse { to { opacity: 0.3; } }
+tr.run.error td:last-child { color: var(--bad); }

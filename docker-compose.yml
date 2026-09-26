@@ -1,0 +1,41 @@
+# Sillon auto-hébergé. Démarrage : `docker compose up -d`, puis ouvre BASE_URL.
+# Spotify exige une Redirect URI en HTTPS (ou 127.0.0.1) : voir le README, section « Auto-hébergement ».
+services:
+  sillon:
+    image: ghcr.io/vatax3/sillon:latest
+    # Pour construire l'image toi-même depuis les sources : décommente la ligne suivante.
+    # build: .
+    container_name: sillon
+    restart: unless-stopped
+    ports:
+      # Exposé uniquement en local : un reverse proxy HTTPS (Caddy, Traefik, Nginx…) se place devant.
+      - "127.0.0.1:8080:8080"
+    environment:
+      # Obligatoire : Client ID de ton app sur https://developer.spotify.com/dashboard
+      SPOTIFY_CLIENT_ID: ""
+      # URL publique de Sillon. Déclare "${BASE_URL}/auth/callback" comme Redirect URI dans l'app Spotify.
+      BASE_URL: "https://sillon.example.com"
+      TZ: "Europe/Paris"
+      # Optionnel : secret de l'app Spotify (sinon PKCE, sans secret).
+      # SPOTIFY_CLIENT_SECRET: ""
+      # Optionnel : clé Last.fm gratuite pour des genres plus rapides et plus riches.
+      # LASTFM_API_KEY: ""
+      # Optionnel : restreindre aux ids Spotify listés (séparés par des virgules).
+      # ALLOWED_SPOTIFY_IDS: ""
+    volumes:
+      - sillon-data:/data
+
+  # Optionnel : HTTPS automatique (Let's Encrypt) avec Caddy, si tu as un nom de domaine pointant
+  # vers ton serveur. Décommente ce bloc et le volume caddy-data, et adapte Caddyfile.
+  # caddy:
+  #   image: caddy:2
+  #   restart: unless-stopped
+  #   ports: ["80:80", "443:443"]
+  #   volumes:
+  #     - ./Caddyfile:/etc/caddy/Caddyfile:ro
+  #     - caddy-data:/data
+  # (et dans le service sillon, remplace le port par `expose: ["8080"]`)
+
+volumes:
+  sillon-data:
+  # caddy-data:
