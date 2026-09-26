@@ -12,7 +12,7 @@ RUN npx vite build && npm run build:server
 # ---- Exécution : Node + l'interface + un seul fichier serveur, sans node_modules
 FROM node:24-alpine
 ARG SILLON_VERSION=dev
-RUN apk add --no-cache tzdata \
+RUN apk add --no-cache tzdata su-exec \
  && mkdir -p /data && chown node:node /data
 ENV NODE_ENV=production \
     PORT=8080 \
@@ -23,7 +23,9 @@ ENV NODE_ENV=production \
 WORKDIR /app
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/dist-server ./dist-server
-USER node
+COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+# Démarre en root uniquement pour préparer /data, puis s'exécute en utilisateur non privilégié (PUID/PGID).
+ENTRYPOINT ["docker-entrypoint.sh"]
 VOLUME /data
 EXPOSE 8080
 HEALTHCHECK --interval=60s --timeout=5s --start-period=10s CMD wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1

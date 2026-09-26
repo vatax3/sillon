@@ -22,8 +22,13 @@ services:
       # LASTFM_API_KEY: ""
       # Optionnel : restreindre aux ids Spotify listés (séparés par des virgules).
       # ALLOWED_SPOTIFY_IDS: ""
+      # Optionnel : utilisateur propriétaire des données (défaut 1000:1000 ; Unraid : 99 / 100).
+      # PUID: "1000"
+      # PGID: "1000"
     volumes:
       - sillon-data:/data
+      # Ou un dossier de l'hôte (ses droits sont corrigés automatiquement au démarrage) :
+      # - ./data:/data
 
   # Optionnel : HTTPS automatique (Let's Encrypt) avec Caddy, si tu as un nom de domaine pointant
   # vers ton serveur. Décommente ce bloc et le volume caddy-data, et adapte Caddyfile.

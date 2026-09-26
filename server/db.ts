@@ -8,8 +8,27 @@ import type { JobKind, JobRun } from '../src/lib/automations';
 import { decode, encode } from '../src/lib/serialize';
 import { config } from './config';
 
-fs.mkdirSync(config.dataDir, { recursive: true });
-export const db = new DatabaseSync(path.join(config.dataDir, 'sillon.db'));
+function openDatabase(): DatabaseSync {
+  const file = path.join(config.dataDir, 'sillon.db');
+  try {
+    fs.mkdirSync(config.dataDir, { recursive: true });
+    fs.accessSync(config.dataDir, fs.constants.W_OK);
+    return new DatabaseSync(file);
+  } catch (e) {
+    const uid = process.getuid?.() ?? '?';
+    const gid = process.getgid?.() ?? '?';
+    console.error(
+      `[sillon] Impossible d'ouvrir ${file} en écriture (processus ${uid}:${gid}) : ${e instanceof Error ? e.message : e}\n` +
+        `[sillon] Le dossier monté sur ${config.dataDir} n'est pas accessible en écriture. Solutions :\n` +
+        `[sillon]   • sur l'hôte : sudo chown -R ${uid}:${gid} <dossier monté>\n` +
+        `[sillon]   • ou définir PUID / PGID sur le propriétaire du dossier (ex. PUID=99 PGID=100 sur Unraid)\n` +
+        `[sillon]   • ou utiliser un volume Docker nommé (voir docker-compose.yml)`,
+    );
+    process.exit(1);
+  }
+}
+
+export const db = openDatabase();
 
 db.exec(`
   PRAGMA journal_mode = WAL;

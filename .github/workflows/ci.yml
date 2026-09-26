@@ -94,16 +94,35 @@ jobs:
           cache-to: type=gha,mode=max
       - name: Test de fumée du conteneur
         run: |
-          docker run -d --name sillon -p 8080:8080 -e SPOTIFY_CLIENT_ID=test -e BASE_URL=http://127.0.0.1:8080 sillon:test
-          for i in $(seq 1 30); do curl -fs http://127.0.0.1:8080/healthz && break; sleep 1; done
-          curl -fs http://127.0.0.1:8080/api/config | grep -q '"mode":"server"'
-          curl -fs http://127.0.0.1:8080/ | grep -q '<title>Sillon'
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/revs)" = 401
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/auth/login)" = 302
-          docker exec sillon test -f /data/sillon.db
-          docker exec sillon sh -c 'test "$(id -un)" = node'
-          docker logs sillon
-          docker rm -f sillon
+          set -e
+          wait_ok() { for i in $(seq 1 30); do curl -fs "http://127.0.0.1:$1/healthz" >/dev/null && return 0; sleep 1; done; docker logs "$2"; return 1; }
+          # 1. Volume Docker (cas par défaut du docker-compose.yml)
+          docker run -d --name s1 -p 8081:8080 -e SPOTIFY_CLIENT_ID=test -e BASE_URL=http://127.0.0.1:8081 sillon:test
+          wait_ok 8081 s1
+          curl -fs http://127.0.0.1:8081/api/config | grep -q '"mode":"server"'
+          curl -fs http://127.0.0.1:8081/ | grep -q '<title>Sillon'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/api/revs)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/auth/login)" = 302
+          # Le serveur tourne sans root.
+          test "$(docker exec s1 awk '/^Uid:/{print $2}' /proc/1/status)" = 1000
+          # 2. Dossier de l'hôte appartenant à root (./data:/data) : droits corrigés au démarrage
+          mkdir -p "$RUNNER_TEMP/rootdata" && sudo chown root:root "$RUNNER_TEMP/rootdata" && sudo chmod 755 "$RUNNER_TEMP/rootdata"
+          docker run -d --name s2 -p 8082:8080 -v "$RUNNER_TEMP/rootdata:/data" -e SPOTIFY_CLIENT_ID=test sillon:test
+          wait_ok 8082 s2
+          test "$(stat -c %u "$RUNNER_TEMP/rootdata/sillon.db")" = 1000
+          # Redémarrage sur les mêmes données
+          docker restart s2 && wait_ok 8082 s2
+          # 3. PUID / PGID personnalisés
+          mkdir -p "$RUNNER_TEMP/puid"
+          docker run -d --name s3 -p 8083:8080 -v "$RUNNER_TEMP/puid:/data" -e PUID=1234 -e PGID=1234 -e SPOTIFY_CLIENT_ID=test sillon:test
+          wait_ok 8083 s3
+          test "$(stat -c %u:%g "$RUNNER_TEMP/puid/sillon.db")" = 1234:1234
+          # 4. Lancé directement sans root (option user:) sur un dossier non accessible : message clair, pas de boucle muette
+          mkdir -p "$RUNNER_TEMP/ro" && sudo chown root:root "$RUNNER_TEMP/ro"
+          docker run --name s4 --user 1000:1000 -v "$RUNNER_TEMP/ro:/data" -e SPOTIFY_CLIENT_ID=test sillon:test || true
+          docker logs s4 2>&1 | grep -q "pas accessible en écriture"
+          docker logs s2
+          docker rm -f s1 s2 s3 s4
       - if: github.event_name == 'push'
         uses: docker/login-action@v3
         with:

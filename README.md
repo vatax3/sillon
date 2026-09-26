@@ -81,13 +81,14 @@ Spotify n'accepte comme Redirect URI que du **HTTPS**, ou `http://127.0.0.1`. Tr
 | `SPOTIFY_CLIENT_SECRET` | | Secret de l'app. Sans lui, le serveur utilise PKCE. |
 | `LASTFM_API_KEY` | | Clé Last.fm pour tous les comptes (genres plus rapides et plus riches) |
 | `ALLOWED_SPOTIFY_IDS` | | Liste d'ids Spotify autorisés, séparés par des virgules |
+| `PUID`, `PGID` | | Utilisateur propriétaire des données (défaut `1000`/`1000`, Unraid : `99`/`100`) |
 | `PORT`, `DATA_DIR` | | `8080` et `/data` par défaut |
 
 ### Données et sécurité
 
 - Tout est dans le volume `/data` : la base `sillon.db` (SQLite) et les exports `exports/<compte>/`. Sauvegarder ce volume suffit.
 - Les jetons Spotify ne quittent jamais le serveur, sauf les jetons d'accès courts dont l'interface a besoin. La session est un cookie `HttpOnly`, et les écritures exigent un en-tête anti-CSRF.
-- Le conteneur tourne en utilisateur non-root, sans aucune dépendance npm à l'exécution : le serveur est un seul fichier JS.
+- Le conteneur ne démarre en root que pour corriger les droits de `/data` (utile avec un dossier monté comme `./data:/data`). Il s'exécute ensuite en utilisateur non privilégié (`PUID`/`PGID`), sans aucune dépendance npm à l'exécution : le serveur est un seul fichier JS.
 - Si Spotify révoque l'accès d'un compte, ses tâches s'arrêtent et une notification d'échec est envoyée. Il suffit de se reconnecter.
 
 ### Construire l'image soi-même
