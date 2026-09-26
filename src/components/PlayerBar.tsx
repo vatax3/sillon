@@ -23,7 +23,8 @@ export default function PlayerBar() {
       const s = await sp.getPlayback();
       fetchedAt.current = Date.now();
       setState(s ?? null);
-      if (!s) setDevices(await sp.getDevices());
+      // Pas d'appareil actif : état normal, pas une erreur.
+      if (!s) setDevices(await sp.getDevices().catch(() => []));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

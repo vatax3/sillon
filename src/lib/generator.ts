@@ -27,6 +27,10 @@ export function usesFeatures(rule: Rule): boolean {
 
 const inRange = (v: number, r?: Range) => !r || (v >= r[0] && v <= r[1]);
 
+export function usesHistory(rule: Rule): boolean {
+  return !!(rule.minPlays || rule.notPlayedForDays || rule.playedWithinDays || rule.maxSkipRate !== undefined || rule.discoveredWithinDays);
+}
+
 export interface FilterReport {
   matched: EnrichedTrack[];
   /** Titres écartés uniquement parce qu'il leur manque des audio-features. */
@@ -37,11 +41,14 @@ export function filterTracks(index: LibraryIndex, rule: Rule, pool?: Set<string>
   const featureFilter = FEATURE_KEYS.some((k) => rule[k]);
   const include = new Set(rule.artistsInclude);
   const exclude = new Set(rule.artistsExclude);
+  const banned = new Set(rule.excluded ?? []);
+  const historyFilter = usesHistory(rule);
   let missingFeatures = 0;
 
   const matched = index.tracks.filter((t) => {
     const tr = t.track;
     if (pool && !pool.has(tr.id)) return false;
+    if (banned.has(tr.id)) return false;
     if (rule.sources.length && !rule.sources.some((s) => t.sources.includes(s))) return false;
     if (include.size && !tr.artists.some((a) => include.has(a.id))) return false;
     if (tr.artists.some((a) => exclude.has(a.id))) return false;
@@ -60,6 +67,15 @@ export function filterTracks(index: LibraryIndex, rule: Rule, pool?: Set<string>
     if (rule.maxDurationMin && tr.durationMs > rule.maxDurationMin * 60_000) return false;
     if (rule.explicit === 'exclude' && tr.explicit) return false;
     if (rule.explicit === 'only' && !tr.explicit) return false;
+    if (historyFilter) {
+      const l = t.listen;
+      const daysSince = (ts: number) => (now - ts) / DAY;
+      if (rule.minPlays && (l?.plays ?? 0) < rule.minPlays) return false;
+      if (rule.notPlayedForDays && l && daysSince(l.last) < rule.notPlayedForDays) return false;
+      if (rule.playedWithinDays && (!l || daysSince(l.last) > rule.playedWithinDays)) return false;
+      if (rule.maxSkipRate !== undefined && l?.skipRate !== undefined && l.skipRate > rule.maxSkipRate) return false;
+      if (rule.discoveredWithinDays && (!l || daysSince(l.first) > rule.discoveredWithinDays)) return false;
+    }
     if (featureFilter) {
       if (!t.features) {
         missingFeatures++;
@@ -97,17 +113,23 @@ export interface GeneratedPlaylist {
 
 /** `pool` restreint la génération à un sous-ensemble de titres (ex. une ambiance détectée). */
 export function generate(index: LibraryIndex, rule: Rule, pool?: Set<string>): GeneratedPlaylist {
-  const { matched, missingFeatures } = filterTracks(index, rule, pool);
+  const banned = new Set(rule.excluded ?? []);
+  // Les titres épinglés à la main passent avant tout, quels que soient les critères.
+  const pinned = (rule.pinned ?? []).filter((id) => !banned.has(id)).map((id) => index.byId.get(id)).filter((t): t is EnrichedTrack => !!t);
+  const pinnedIds = new Set(pinned.map((t) => t.track.id));
+  const filtered = filterTracks(index, rule, pool);
+  const matched = filtered.matched.filter((t) => !pinnedIds.has(t.track.id));
+  const room = Math.max(0, rule.maxTracks - pinned.length);
   // Sélection d'abord (aléatoire ou par affinité), mise en ordre ensuite :
   // sinon « énergie croissante » + limite 50 ne garderait que les 50 titres les plus calmes.
   const selectionOrder = sortTracks(matched, rule.sort === 'affinity' ? 'affinity' : 'shuffle', rule.seed);
-  const selected = capPerArtist(selectionOrder, rule.maxPerArtist, rule.maxTracks);
   const chronological = ['added_desc', 'release_asc', 'release_desc'].includes(rule.sort);
   // Pour les tris chronologiques, on veut les plus récents/anciens de tout le filtre.
-  const tracks = chronological
-    ? capPerArtist(sortTracks(matched, rule.sort, rule.seed), rule.maxPerArtist, rule.maxTracks)
-    : sortTracks(selected, rule.sort, rule.seed);
-  return { tracks, matchedCount: matched.length, missingFeatures };
+  const picked = chronological
+    ? capPerArtist(sortTracks(matched, rule.sort, rule.seed), rule.maxPerArtist, room)
+    : capPerArtist(selectionOrder, rule.maxPerArtist, room);
+  const tracks = sortTracks([...pinned, ...picked], rule.sort, rule.seed);
+  return { tracks, matchedCount: matched.length + pinned.length, missingFeatures: filtered.missingFeatures };
 }
 
 // ---------- Nom et description automatiques ----------
@@ -129,6 +151,10 @@ export function describeRule(rule: Rule, artistName: (id: string) => string): { 
   const pct = (r: Range) => `${Math.round(r[0] * 100)}–${Math.round(r[1] * 100)}%`;
   if (rule.energy) parts.push(`énergie ${pct(rule.energy)}`);
   if (rule.valence) parts.push(`positivité ${pct(rule.valence)}`);
+  if (rule.minPlays) parts.push(`écoutés ${rule.minPlays}+ fois`);
+  if (rule.notPlayedForDays) parts.push(`pas écoutés depuis ${rule.notPlayedForDays} j`);
+  if (rule.playedWithinDays) parts.push(`écoutés ces ${rule.playedWithinDays} j`);
+  if (rule.discoveredWithinDays) parts.push(`découverts ces ${rule.discoveredWithinDays} j`);
   const name = parts.length ? parts.slice(0, 3).join(' · ') : 'Mix de ma bibliothèque';
   const description = `${[...parts, SORT_LABELS[rule.sort].toLowerCase()].join(' · ')} — généré par Sillon le ${new Date().toLocaleDateString('fr-FR')}`;
   return { name, description: description.slice(0, 300) };

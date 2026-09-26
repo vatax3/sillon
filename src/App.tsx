@@ -66,6 +66,13 @@ function Shell() {
     }
   }, [store.ready, store.library]);
 
+  useEffect(() => {
+    if (store.editRequest) {
+      setTab('playlists');
+      setPlaylistView('mine');
+    }
+  }, [store.editRequest?.nonce]);
+
   const openInBuilder = (rule: Rule) => {
     setDraft(rule);
     setTab('playlists');
@@ -139,7 +146,7 @@ function Shell() {
                   tabs={[
                     { id: 'suggestions', label: 'Suggestions' },
                     { id: 'builder', label: 'Créateur' },
-                    { id: 'mine', label: 'Playlists vivantes', badge: store.saved.length },
+                    { id: 'mine', label: 'Mes playlists', badge: store.saved.length },
                   ]}
                   value={playlistView}
                   onChange={setPlaylistView}

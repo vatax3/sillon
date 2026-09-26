@@ -4,6 +4,8 @@ Analyse ta bibliothèque Spotify et génère des playlists par genre, mood, épo
 
 100 % navigateur : pas de serveur, pas de secret (OAuth PKCE). Les données restent dans IndexedDB.
 
+**Version en ligne** : <https://vatax3.github.io/sillon/>. Il faut ton propre Client ID Spotify, et la Redirect URI `https://vatax3.github.io/sillon/callback` déclarée dans ton app Spotify.
+
 ## Démarrage
 
 1. Crée une app sur <https://developer.spotify.com/dashboard> (API : **Web API**). Le compte propriétaire doit être **Premium**.
@@ -26,7 +28,7 @@ Colle le Client ID à l'écran d'accueil, ou mets-le dans `.env` (voir `.env.exa
 |---|---|
 | **Analyse** | Familles de genres, genres précis, moods, décennies, artistes les plus présents, profil sonore, likes par année, doublons probables. Chaque barre est cliquable et ouvre le Créateur pré-rempli. |
 | **Écoutes** | Import de ton historique Spotify (export « streaming étendu »), puis stats sur n'importe quelle période : temps d'écoute réel, carte heure × jour, tops par minutes, séries de jours, taux de skip (y compris « liké mais toujours skippé »), époques mois par mois, obsessions, fidélité, humeur × moment, machine à remonter le temps, playlists de tes moments (matins, soirées, week-ends), comparaison année par année. |
-| **Playlists** | *Suggestions* (ambiances détectées par clustering, moods, genres, époques, redécouvertes), *Créateur* à règles (genre, mood, artistes, années, énergie, tempo…, 9 ordres dont **Mix DJ** et **Arc d'énergie**), *Playlists vivantes* actualisables, avec actualisation automatique en option. |
+| **Playlists** | *Suggestions* (ambiances détectées par clustering, moods, genres, époques, redécouvertes), *Créateur* à règles (genre, mood, artistes, années, énergie, tempo, et avec l'historique importé : nombre d'écoutes, dernière écoute, taux de skip, date de découverte…, 9 ordres dont **Mix DJ** et **Arc d'énergie**), *Mes playlists* : playlists vivantes actualisables, et **éditeur manuel** pour toutes tes playlists (glisser-déposer, ajout depuis ta bibliothèque ou Spotify, retrait, tri, doublons, nom et description, annulation). Sur une playlist vivante, tes ajouts sont épinglés et tes retraits exclus des actualisations suivantes. |
 | **Découvrir** | *Recommandations* à partir de tes écoutes récentes, de tes favoris, d'une playlist à prolonger ou d'artistes précis : artistes similaires (Deezer), extraits 30 s, tout ce que tu connais déjà est écarté. *Radar de sorties* de tes artistes. *À creuser* : artistes très écoutés mais absents de ta bibliothèque, albums à écouter en entier. |
 | **Ranger** | Titres de tes playlists non likés (like groupé). Trieur des likés sans playlist, avec suggestions et raccourcis clavier. Doublons dans une playlist, playlists qui se recouvrent, fusion, découpage par genre/décennie/mood, réordonnancement sur place. Artistes à suivre. Sauvegardes, différences et restauration. |
 | **Amis** | Carte de goûts exportable (JSON à échanger, image à partager), score de compatibilité détaillé, artistes à se faire découvrir, **Blend** à deux. Tout se passe sans serveur. |
@@ -56,10 +58,13 @@ L'enrichissement est interruptible et reprend où il s'était arrêté. Les arti
 ## Développement
 
 ```bash
-npm test             # tests unitaires (genres, moods, Camelot, générateur, clustering, historique, rangement, social)
+npm test             # tests unitaires + intégration contre une fausse API Spotify
 npm run typecheck
 npm run build
+npm run build:pages  # version GitHub Pages (sous /sillon/)
 ```
+
+La CI GitHub vérifie typecheck, tests et build à chaque push, puis publie `main` sur GitHub Pages.
 
 Structure :
 

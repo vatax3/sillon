@@ -134,6 +134,22 @@ export interface Rule {
   explicit: 'any' | 'exclude' | 'only';
   /** Exclut les titres présents dans le top / écoutés récemment (pour les redécouvertes). */
   excludeHeavyRotation?: boolean;
+  // --- Historique d'écoute (nécessite un historique importé) ---
+  /** Écouté au moins N fois (écoutes de plus de 30 s). */
+  minPlays?: number;
+  /** Pas écouté depuis au moins N jours (jamais écouté compte). */
+  notPlayedForDays?: number;
+  /** Écouté dans les N derniers jours. */
+  playedWithinDays?: number;
+  /** Taux de skip maximal (0–1), quand il est connu. */
+  maxSkipRate?: number;
+  /** Première écoute dans les N derniers jours. */
+  discoveredWithinDays?: number;
+  // --- Retouches manuelles d'une playlist vivante ---
+  /** Titres toujours inclus (ajoutés à la main dans l'éditeur). */
+  pinned?: string[];
+  /** Titres jamais inclus (retirés à la main dans l'éditeur). */
+  excluded?: string[];
   maxTracks: number;
   maxPerArtist: number;
   sort: SortMode;
@@ -167,5 +183,7 @@ export interface Settings {
 export interface PlaylistBackup {
   id: string;
   createdAt: string;
+  /** Contexte de la sauvegarde (ex. « avant modification de X »). */
+  label?: string;
   playlists: { id: string; name: string; trackIds: string[] }[];
 }

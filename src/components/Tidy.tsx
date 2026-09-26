@@ -427,7 +427,8 @@ function Backups() {
   const lib = store.library!;
   const [selected, setSelected] = useState(store.backups[0]?.id ?? '');
   const backup = store.backups.find((b) => b.id === selected);
-  const diffs = useMemo(() => (backup ? diffWithBackup(lib, backup) : []), [lib, backup]);
+  const livingIds = useMemo(() => new Set(store.saved.map((s) => s.spotifyId)), [store.saved]);
+  const diffs = useMemo(() => (backup ? diffWithBackup(lib, backup, livingIds) : []), [lib, backup, livingIds]);
   const trackLabel = (id: string) => {
     const t = lib.tracks[id];
     return t ? `${t.name} — ${t.artists[0]?.name}` : id;
@@ -460,7 +461,7 @@ function Backups() {
             <select value={selected} onChange={(e) => setSelected(e.target.value)}>
               {store.backups.map((b) => (
                 <option key={b.id} value={b.id}>
-                  {new Date(b.createdAt).toLocaleString('fr-FR')} · {b.playlists.length} playlists
+                  {new Date(b.createdAt).toLocaleString('fr-FR')} · {b.label ?? `${b.playlists.length} playlists`}
                 </option>
               ))}
             </select>
@@ -478,12 +479,12 @@ function Backups() {
                   <div className="diff-head">
                     <strong>{d.name}</strong>
                     <span className="muted small">
-                      {d.deleted ? `supprimée (${d.removed.length} titres)` : `+${d.added.length} / −${d.removed.length}`}
+                      {d.unsynced ? 'playlist vivante (contenu actuel non comparé)' : d.deleted ? `supprimée (${d.removed.length} titres)` : `+${d.added.length} / −${d.removed.length}`}
                     </span>
                     <span className="spacer" />
                     <AsyncButton onClick={() => store.restoreFromBackup(selected, d.id)}>{d.deleted ? 'Recréer' : 'Restaurer cette version'}</AsyncButton>
                   </div>
-                  {!d.deleted && (
+                  {!d.deleted && !d.unsynced && (
                     <details>
                       <summary className="small">Voir le détail</summary>
                       <ul className="small">

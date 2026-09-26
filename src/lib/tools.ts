@@ -133,14 +133,20 @@ export interface PlaylistDiff {
   removed: string[];
   /** Playlist présente dans la sauvegarde mais plus dans la bibliothèque. */
   deleted: boolean;
+  /** Playlist existante mais hors synchro (ex. playlist vivante) : pas de comparaison possible. */
+  unsynced?: boolean;
 }
 
 /** Différences entre une sauvegarde et l'état actuel. */
-export function diffWithBackup(lib: Library, backup: PlaylistBackup): PlaylistDiff[] {
+export function diffWithBackup(lib: Library, backup: PlaylistBackup, existingElsewhere: Set<string> = new Set()): PlaylistDiff[] {
   const out: PlaylistDiff[] = [];
   for (const p of backup.playlists) {
     const current = lib.playlistItems?.[p.id];
     const exists = lib.playlists.some((x) => x.id === p.id);
+    if (!exists && existingElsewhere.has(p.id)) {
+      out.push({ id: p.id, name: p.name, added: [], removed: [], deleted: false, unsynced: true });
+      continue;
+    }
     if (!exists) {
       out.push({ id: p.id, name: p.name, added: [], removed: p.trackIds, deleted: true });
       continue;

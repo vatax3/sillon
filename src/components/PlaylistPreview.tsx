@@ -112,9 +112,14 @@ export default function PlaylistPreview({
               <input type="checkbox" checked={isPublic} onChange={(e) => setPublic(e.target.checked)} /> Publique
             </label>
             {created ? (
-              <a className="button primary" href={playlistUrl(created)} target="_blank" rel="noreferrer">
-                Ouvrir dans Spotify ↗
-              </a>
+              <>
+                <button className="ghost" onClick={() => store.openEditor(created)}>
+                  Modifier à la main
+                </button>
+                <a className="button primary" href={playlistUrl(created)} target="_blank" rel="noreferrer">
+                  Ouvrir dans Spotify ↗
+                </a>
+              </>
             ) : (
               <button className="primary" onClick={create} disabled={busy}>
                 {busy ? 'Création…' : 'Créer sur Spotify'}

@@ -19,6 +19,24 @@ const PRESETS: { label: string; rule: Partial<Rule> }[] = [
   { label: '💎 Pépites oubliées', rule: { sources: ['liked'], addedBeforeDays: 365, excludeHeavyRotation: true } },
 ];
 
+// Presets qui s'appuient sur l'historique importé.
+const HISTORY_PRESETS: { label: string; rule: Partial<Rule> }[] = [
+  { label: '🕰️ Favoris perdus de vue', rule: { minPlays: 10, notPlayedForDays: 180, sort: 'affinity', maxTracks: 50 } },
+  { label: '🔁 En boucle en ce moment', rule: { minPlays: 3, playedWithinDays: 30, sort: 'affinity', maxTracks: 40 } },
+  { label: '🌱 Découvertes de l’année', rule: { discoveredWithinDays: 365, minPlays: 5, sort: 'affinity', maxTracks: 60 } },
+  { label: '🚫 Sans les titres que je skippe', rule: { maxSkipRate: 0.3, minPlays: 3, sort: 'shuffle', maxTracks: 60 } },
+];
+
+const LAST_PLAYED = [
+  { value: '', label: 'Peu importe' },
+  { value: 'w30', label: 'Écoutés ces 30 derniers jours' },
+  { value: 'w90', label: 'Écoutés ces 3 derniers mois' },
+  { value: 'n180', label: 'Pas écoutés depuis 6 mois' },
+  { value: 'n365', label: 'Pas écoutés depuis 1 an' },
+];
+
+const lastPlayedValue = (r: Rule) => (r.playedWithinDays ? `w${r.playedWithinDays}` : r.notPlayedForDays ? `n${r.notPlayedForDays}` : '');
+
 const SOURCES: { id: Source; label: string }[] = [
   { id: 'liked', label: 'Titres likés' },
   { id: 'playlists', label: 'Mes playlists' },
@@ -79,7 +97,7 @@ export default function Builder({ initialRule }: { initialRule: Rule | null }) {
     <div className="builder">
       <aside className="rules">
         <div className="presets">
-          {PRESETS.map((p) => (
+          {[...PRESETS, ...(index.hasHistory ? HISTORY_PRESETS : [])].map((p) => (
             <button key={p.label} className="chip" onClick={() => {
                 setRule({ ...defaultRule(), ...p.rule });
                 setPresetName(p.label.replace(/^\p{Extended_Pictographic}\uFE0F?\s*/u, ''));
@@ -172,6 +190,62 @@ export default function Builder({ initialRule }: { initialRule: Rule | null }) {
               </label>
             ))}
           </div>
+        </Section>
+
+        <Section title="Historique d’écoute">
+          {!index.hasHistory ? (
+            <p className="muted small">Importe ton historique (onglet Écoutes) pour filtrer selon ce que tu écoutes vraiment : titres les plus écoutés, pas écoutés depuis longtemps, souvent skippés…</p>
+          ) : (
+            <>
+              <label className="field">
+                <span>Écouté au moins</span>
+                <select value={rule.minPlays ?? 0} onChange={(e) => set({ minPlays: Number(e.target.value) || undefined })}>
+                  <option value={0}>peu importe</option>
+                  {[1, 3, 5, 10, 20, 50].map((n) => (
+                    <option key={n} value={n}>
+                      {n} fois
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>Dernière écoute</span>
+                <select
+                  value={lastPlayedValue(rule)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    set({ playedWithinDays: v.startsWith('w') ? Number(v.slice(1)) : undefined, notPlayedForDays: v.startsWith('n') ? Number(v.slice(1)) : undefined });
+                  }}
+                >
+                  {LAST_PLAYED.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="row">
+                <label className="field">
+                  <span>Skippés au plus</span>
+                  <select value={rule.maxSkipRate ?? ''} onChange={(e) => set({ maxSkipRate: e.target.value === '' ? undefined : Number(e.target.value) })}>
+                    <option value="">peu importe</option>
+                    <option value={0.1}>10 % du temps</option>
+                    <option value={0.3}>30 % du temps</option>
+                    <option value={0.5}>50 % du temps</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Découverts</span>
+                  <select value={rule.discoveredWithinDays ?? 0} onChange={(e) => set({ discoveredWithinDays: Number(e.target.value) || undefined })}>
+                    <option value={0}>peu importe</option>
+                    <option value={30}>ce mois-ci</option>
+                    <option value={90}>ces 3 mois</option>
+                    <option value={365}>cette année</option>
+                  </select>
+                </label>
+              </div>
+            </>
+          )}
         </Section>
 
         <Section title="Son" collapsible>

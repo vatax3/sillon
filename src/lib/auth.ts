@@ -42,7 +42,7 @@ export function setClientId(id: string) {
 }
 
 export function getRedirectUri(): string {
-  return import.meta.env.VITE_REDIRECT_URI || `${location.origin}/callback`;
+  return import.meta.env.VITE_REDIRECT_URI || `${location.origin}${import.meta.env.BASE_URL}callback`;
 }
 
 function base64url(bytes: Uint8Array): string {
@@ -81,12 +81,13 @@ export async function login(): Promise<void> {
 
 /** Traite le retour de Spotify sur /callback. Retourne true si un login vient d'aboutir. */
 export async function handleCallback(): Promise<boolean> {
-  if (location.pathname !== '/callback') return false;
+  // Sous-chemin possible (GitHub Pages : /sillon/callback, servi via 404.html).
+  if (!location.pathname.endsWith('/callback')) return false;
   const params = new URLSearchParams(location.search);
   const error = params.get('error');
   const code = params.get('code');
   const state = params.get('state');
-  history.replaceState(null, '', '/');
+  history.replaceState(null, '', import.meta.env.BASE_URL);
   if (error) throw new Error(`Connexion refusée par Spotify : ${error}`);
   if (!code) return false;
   if (state !== sessionStorage.getItem(K_STATE)) throw new Error('État OAuth invalide, réessaie.');

@@ -116,6 +116,45 @@ export async function getPlaylistTracks(id: string, signal?: AbortSignal): Promi
   return rows.map((r) => r.item ?? r.track).filter((t): t is RawTrack => !!t);
 }
 
+/** Métadonnées d'une playlist (nom, description, version). */
+export async function getPlaylistMeta(id: string) {
+  return api<{ id: string; name: string; description: string | null; snapshot_id: string; public: boolean | null; collaborative: boolean; owner: { id: string } }>(
+    `/playlists/${id}?fields=id,name,description,snapshot_id,public,collaborative,owner(id)`,
+  );
+}
+
+export interface PlaylistEntry {
+  uri: string;
+  id?: string;
+  name: string;
+  artists: string;
+  image?: string;
+  durationMs: number;
+  kind: 'track' | 'episode' | 'local';
+}
+
+/** Contenu complet d'une playlist, épisodes et fichiers locaux compris (pour l'éditeur). */
+export async function getPlaylistEntries(id: string, signal?: AbortSignal): Promise<PlaylistEntry[]> {
+  type Raw = RawTrack & { show?: { name: string }; images?: { url: string }[] };
+  const rows = await paginate<{ item?: Raw | null; track?: Raw | null; is_local?: boolean }>(`/playlists/${id}/items?limit=50&additional_types=track,episode`, undefined, signal);
+  return rows
+    .map((r) => r.item ?? r.track)
+    .filter((t): t is Raw => !!t)
+    .map((t) => {
+      const kind: PlaylistEntry['kind'] = t.is_local || t.uri.startsWith('spotify:local:') ? 'local' : t.type === 'episode' ? 'episode' : 'track';
+      const images = t.album?.images ?? t.images ?? [];
+      return {
+        uri: t.uri,
+        id: kind === 'local' ? undefined : (t.id ?? undefined),
+        name: t.name,
+        artists: kind === 'episode' ? (t.show?.name ?? 'Podcast') : (t.artists ?? []).map((a) => a.name).join(', '),
+        image: [...images].sort((a, b) => ((a as { width?: number }).width ?? 0) - ((b as { width?: number }).width ?? 0))[0]?.url,
+        durationMs: t.duration_ms,
+        kind,
+      };
+    });
+}
+
 export async function getTop<T extends 'tracks' | 'artists'>(
   type: T,
   range: TimeRange,

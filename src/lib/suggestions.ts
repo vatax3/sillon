@@ -212,6 +212,23 @@ export function buildSuggestions(index: LibraryIndex, artistName: (id: string) =
     rule: rule({ sources: ['top'], sort: 'affinity', maxTracks: 60, maxPerArtist: 3 }, seed),
   });
 
+  if (index.hasHistory) {
+    push({
+      id: 'rediscover-lost',
+      kind: 'rediscover',
+      title: '🕰️ Favoris perdus de vue',
+      subtitle: 'écoutés au moins 10 fois, mais plus depuis 6 mois',
+      rule: rule({ minPlays: 10, notPlayedForDays: 180, sort: 'affinity' }, seed),
+    });
+    push({
+      id: 'rediscover-year',
+      kind: 'rediscover',
+      title: '🌱 Découvertes de l’année',
+      subtitle: 'découverts ces 12 derniers mois et écoutés au moins 5 fois',
+      rule: rule({ discoveredWithinDays: 365, minPlays: 5, sort: 'affinity', maxTracks: 60 }, seed),
+    });
+  }
+
   // Un « essentiel » pour les artistes les plus présents dans la bibliothèque.
   const topArtists = [...index.artistCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
   for (const [id] of topArtists) {

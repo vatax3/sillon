@@ -1,6 +1,7 @@
 // Construit une vue « enrichie » de chaque titre, sur laquelle travaillent
 // l'analyse, le générateur et les suggestions.
 import { profileFromTags, type ArtistProfile } from './genres';
+import { FLAG_NO_DURATION, FLAG_SKIPPED, nameKey, type HistoryStore } from './history';
 import { moodsFromFeatures, moodScores } from './moods';
 import type { AudioFeatures, FeatureStore, Library, Mood, Source, TagStore, Track } from './types';
 
@@ -18,6 +19,41 @@ export interface EnrichedTrack {
   affinity: number;
   /** Titre présent dans un top ou écouté récemment. */
   heavyRotation: boolean;
+  /** Statistiques d'écoute tirées de l'historique importé. */
+  listen?: TrackListening;
+}
+
+export interface TrackListening {
+  /** Écoutes de plus de 30 s. */
+  plays: number;
+  /** Taux de skip, quand au moins 3 écoutes portent l'information. */
+  skipRate?: number;
+  first: number;
+  last: number;
+}
+
+/** Agrège l'historique par titre de la bibliothèque (rattachement par id, sinon par artiste + titre). */
+export function listeningByTrack(lib: Library, h: HistoryStore): Map<string, TrackListening> {
+  const byName = new Map<string, string>();
+  for (const t of Object.values(lib.tracks)) byName.set(nameKey(t.artists[0]?.name ?? '', t.name), t.id);
+  const idOf = h.tracks.map((t) => (!t.key.startsWith('n:') && lib.tracks[t.key] ? t.key : byName.get(nameKey(t.artist, t.name))));
+  const acc = new Map<string, { plays: number; withInfo: number; skips: number; first: number; last: number }>();
+  for (let i = 0; i < h.ts.length; i++) {
+    const id = idOf[h.track[i]];
+    if (!id) continue;
+    const e = acc.get(id) ?? { plays: 0, withInfo: 0, skips: 0, first: h.ts[i], last: h.ts[i] };
+    const noInfo = (h.flags[i] & FLAG_NO_DURATION) !== 0;
+    if (noInfo || h.ms[i] >= 30_000) e.plays++;
+    if (!noInfo) {
+      e.withInfo++;
+      if (h.flags[i] & FLAG_SKIPPED) e.skips++;
+    }
+    e.last = h.ts[i];
+    acc.set(id, e);
+  }
+  return new Map(
+    [...acc.entries()].map(([id, e]) => [id, { plays: e.plays, first: e.first, last: e.last, skipRate: e.withInfo >= 3 ? e.skips / e.withInfo : undefined }]),
+  );
 }
 
 export interface LibraryIndex {
@@ -27,11 +63,14 @@ export interface LibraryIndex {
   /** Nombre de titres par artiste. */
   artistCounts: Map<string, number>;
   coverage: { features: number; tags: number; artistsTagged: number; artistsTotal: number };
+  /** Un historique d'écoute a été rattaché aux titres. */
+  hasHistory: boolean;
 }
 
 const RANK_WEIGHT = { short_term: 1, medium_term: 1.5, long_term: 2 } as const;
 
-export function buildIndex(lib: Library, tags: TagStore, features: FeatureStore): LibraryIndex {
+export function buildIndex(lib: Library, tags: TagStore, features: FeatureStore, history?: HistoryStore | null): LibraryIndex {
+  const listening = history?.ts.length ? listeningByTrack(lib, history) : null;
   const artistProfiles = new Map<string, ArtistProfile>();
   let artistsTagged = 0;
   for (const a of Object.values(lib.artists)) {
@@ -86,6 +125,9 @@ export function buildIndex(lib: Library, tags: TagStore, features: FeatureStore)
       affinity += RANK_WEIGHT[range as keyof typeof RANK_WEIGHT] * (1 + (50 - rank!) / 25);
     }
     if (track.lastPlayedAt) affinity += 1;
+    const listen = listening?.get(track.id);
+    // L'historique complet est le meilleur signal d'attachement quand il existe.
+    if (listen) affinity += Math.log1p(listen.plays) * 0.8;
 
     const year = parseInt(track.album.releaseDate.slice(0, 4), 10);
     out.push({
@@ -100,6 +142,7 @@ export function buildIndex(lib: Library, tags: TagStore, features: FeatureStore)
       sources,
       affinity,
       heavyRotation: Object.keys(track.topRanks).length > 0 || !!track.lastPlayedAt,
+      listen,
     });
   }
 
@@ -114,6 +157,7 @@ export function buildIndex(lib: Library, tags: TagStore, features: FeatureStore)
       artistsTagged,
       artistsTotal: Object.keys(lib.artists).length,
     },
+    hasHistory: !!listening,
   };
 }
 

@@ -1,11 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { logout as clearTokens, missingScopes } from './lib/auth';
 import { kvClear, kvGet, kvSet } from './lib/db';
+import { applyManualEdits } from './lib/editor';
 import { fetchArtistTags, fetchAudioFeatures } from './lib/enrich';
 import { generate } from './lib/generator';
 import { emptyHistory, mergePlays, playsFromApi, readExportFiles, type HistoryStore, type RawPlay } from './lib/history';
 import { mostPlayedIds } from './lib/historyStats';
-import { isAbort } from './lib/http';
+import { HttpError, isAbort } from './lib/http';
 import { artistsByImportance, buildIndex, type EnrichedTrack, type LibraryIndex } from './lib/indexer';
 import type { TasteCard } from './lib/social';
 import * as sp from './lib/spotify';
@@ -45,12 +46,17 @@ interface Store {
   createSimplePlaylist: (name: string, description: string, uris: string[]) => Promise<string>;
   refreshSaved: (s: SavedPlaylist) => Promise<void>;
   forgetSaved: (id: string) => void;
+  updateSavedRule: (id: string, rule: Rule) => void;
   likeTracks: (trackIds: string[]) => Promise<void>;
   followArtists: (artistIds: string[]) => Promise<void>;
   addToPlaylist: (playlistId: string, trackIds: string[]) => Promise<void>;
   rewritePlaylist: (playlistId: string, trackIds: string[], reason: string) => Promise<void>;
   createBackup: () => Promise<void>;
   restoreFromBackup: (backupId: string, playlistId: string) => Promise<void>;
+  savePlaylistEdit: (p: PlaylistEdit) => Promise<void>;
+  /** Demande d'ouverture de l'éditeur (lue par l'onglet Playlists). */
+  editRequest: { id: string; nonce: number } | null;
+  openEditor: (playlistId: string | null) => void;
   importHistory: (files: FileList | File[]) => Promise<{ added: number; skipped: string[] }>;
   pullWorker: (quiet?: boolean) => Promise<number>;
   clearHistory: () => Promise<void>;
@@ -67,6 +73,20 @@ interface Store {
   resetAll: () => Promise<void>;
   logout: () => void;
 }
+
+export interface PlaylistEdit {
+  id: string;
+  name: string;
+  description: string;
+  /** Contenu final, dans l'ordre. */
+  uris: string[];
+  /** État à l'ouverture de l'éditeur (pour la sauvegarde et les playlists vivantes). */
+  before: { name: string; description: string; uris: string[]; snapshotId: string };
+  /** Écrase même si la playlist a changé ailleurs depuis l'ouverture. */
+  force?: boolean;
+}
+
+export class PlaylistConflictError extends Error {}
 
 const Ctx = createContext<Store | null>(null);
 
@@ -105,6 +125,7 @@ export function StoreProvider({ children, onLogout }: { children: ReactNode; onL
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [playerTick, setPlayerTick] = useState(0);
+  const [editRequest, setEditRequest] = useState<Store['editRequest']>(null);
   const abortRef = useRef<AbortController | null>(null);
   // Références à jour pour les actions asynchrones enchaînées (évite les closures périmées).
   const libRef = useRef<Library | null>(null);
@@ -146,7 +167,7 @@ export function StoreProvider({ children, onLogout }: { children: ReactNode; onL
     });
   }, []);
 
-  const index = useMemo(() => (library ? buildIndex(library, tags, features) : null), [library, tags, features]);
+  const index = useMemo(() => (library ? buildIndex(library, tags, features, history) : null), [library, tags, features, history]);
   const artistName = useCallback((id: string) => library?.artists[id]?.name ?? id, [library]);
 
   const updateSaved = (fn: (prev: SavedPlaylist[]) => SavedPlaylist[]) =>
@@ -306,7 +327,10 @@ export function StoreProvider({ children, onLogout }: { children: ReactNode; onL
     if (!index) return;
     const rule = { ...s.rule, seed: Math.floor(Math.random() * 1e9) };
     const { tracks } = generate(index, rule, s.pool ? new Set(s.pool) : undefined);
-    await sp.setPlaylistItems(s.spotifyId, tracks.map((t) => t.track.uri));
+    // Les titres épinglés absents de la bibliothèque (ajoutés depuis la recherche Spotify) restent inclus.
+    const banned = new Set(rule.excluded ?? []);
+    const extra = (rule.pinned ?? []).filter((id) => !index.byId.has(id) && !banned.has(id)).map((id) => `spotify:track:${id}`);
+    await sp.setPlaylistItems(s.spotifyId, [...tracks.map((t) => t.track.uri), ...extra]);
     updateSaved((prev) =>
       prev.map((x) =>
         x.spotifyId === s.spotifyId ? { ...x, rule, updatedAt: new Date().toISOString(), trackCount: tracks.length } : x,
@@ -344,6 +368,7 @@ export function StoreProvider({ children, onLogout }: { children: ReactNode; onL
   }, [ready]);
 
   const forgetSaved = (id: string) => updateSaved((prev) => prev.filter((s) => s.spotifyId !== id));
+  const updateSavedRule = (id: string, rule: Rule) => updateSaved((prev) => prev.map((s) => (s.spotifyId === id ? { ...s, rule } : s)));
 
   // ---- Actions sur la bibliothèque (mise à jour locale optimiste après succès de l'API) ----
 
@@ -418,10 +443,61 @@ export function StoreProvider({ children, onLogout }: { children: ReactNode; onL
     if (!p || !lib) return;
     if (lib.playlists.some((x) => x.id === playlistId)) {
       await rewritePlaylist(playlistId, p.trackIds, `« ${p.name} » restaurée`);
-    } else {
+      return;
+    }
+    // Playlist hors synchro (ex. playlist vivante) : on tente de la réécrire, sinon on la recrée.
+    try {
+      await sp.setPlaylistItems(playlistId, p.trackIds.map((t) => `spotify:track:${t}`));
+      setNotice(`« ${p.name} » restaurée.`);
+    } catch (e) {
+      if (!(e instanceof HttpError) || (e.status !== 404 && e.status !== 403)) throw e;
       await createSimplePlaylist(`${p.name} (restaurée)`, `Restaurée par Sillon depuis la sauvegarde du ${new Date(b!.createdAt).toLocaleString('fr-FR')}`, p.trackIds.map((t) => `spotify:track:${t}`));
       setNotice(`« ${p.name} » recréée (${p.trackIds.length} titres). Resynchronise pour la voir.`);
     }
+  };
+
+  const savePlaylistEdit = async (e: PlaylistEdit) => {
+    // Garde-fou : si la playlist a bougé ailleurs (app Spotify, autre appareil) depuis l'ouverture, on prévient.
+    const current = await sp.getPlaylistMeta(e.id);
+    if (!e.force && current.snapshot_id !== e.before.snapshotId) {
+      throw new PlaylistConflictError('Cette playlist a été modifiée ailleurs depuis que tu l’as ouverte.');
+    }
+    const idOf = (uri: string) => uri.match(/^spotify:track:(.+)$/)?.[1];
+    const beforeIds = e.before.uris.map(idOf).filter((x): x is string => !!x);
+    const afterIds = e.uris.map(idOf).filter((x): x is string => !!x);
+    pushBackup({
+      id: `b${Date.now()}`,
+      createdAt: new Date().toISOString(),
+      label: `avant modification de « ${e.before.name} »`,
+      playlists: [{ id: e.id, name: e.before.name, trackIds: beforeIds }],
+    });
+    if (e.name !== e.before.name || e.description !== e.before.description) {
+      await sp.updatePlaylistDetails(e.id, e.name, e.description);
+    }
+    if (e.uris.join() !== e.before.uris.join()) await sp.setPlaylistItems(e.id, e.uris);
+
+    patchLibrary((l) => {
+      const meta = l.playlists.find((p) => p.id === e.id);
+      if (meta) {
+        meta.name = e.name;
+        meta.trackCount = e.uris.length;
+      }
+      if (l.playlistItems?.[e.id]) {
+        l.playlistItems[e.id] = afterIds;
+        const after = new Set(afterIds);
+        for (const id of beforeIds) if (!after.has(id) && l.tracks[id]) l.tracks[id].playlists = l.tracks[id].playlists.filter((p) => p !== e.id);
+        for (const id of afterIds) if (l.tracks[id] && !l.tracks[id].playlists.includes(e.id)) l.tracks[id].playlists.push(e.id);
+      }
+    });
+    // Playlist vivante : les retouches deviennent des épinglés / exclus, pour survivre aux actualisations.
+    updateSaved((prev) =>
+      prev.map((s) =>
+        s.spotifyId === e.id
+          ? { ...s, name: e.name, description: e.description, rule: applyManualEdits(s.rule, beforeIds, afterIds), trackCount: e.uris.length, updatedAt: new Date().toISOString() }
+          : s,
+      ),
+    );
+    setNotice(`« ${e.name} » enregistrée (une sauvegarde de l’ancienne version a été faite).`);
   };
 
   // ---- Historique ----
@@ -517,12 +593,16 @@ export function StoreProvider({ children, onLogout }: { children: ReactNode; onL
     createSimplePlaylist,
     refreshSaved,
     forgetSaved,
+    updateSavedRule,
     likeTracks,
     followArtists,
     addToPlaylist,
     rewritePlaylist,
     createBackup,
     restoreFromBackup,
+    savePlaylistEdit,
+    editRequest,
+    openEditor: (id) => setEditRequest(id ? { id, nonce: Date.now() } : null),
     importHistory,
     pullWorker,
     clearHistory,
