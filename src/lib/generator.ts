@@ -13,7 +13,7 @@ export const defaultRule = (): Rule => ({
   sources: [],
   explicit: 'any',
   maxTracks: 50,
-  maxPerArtist: 3,
+  maxPerArtist: 0,
   sort: 'shuffle',
   seed: Math.floor(Math.random() * 1e9),
 });

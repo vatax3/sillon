@@ -121,7 +121,7 @@ export default function Builder({ initialRule }: { initialRule: Rule | null }) {
             </label>
             <label className="field">
               <span>Max par artiste</span>
-              <input type="number" min={0} max={50} value={rule.maxPerArtist} title="0 = illimité" onChange={(e) => set({ maxPerArtist: Math.max(0, Number(e.target.value) || 0) })} />
+              <input type="number" min={0} max={50} value={rule.maxPerArtist || ''} placeholder="illimité" onChange={(e) => set({ maxPerArtist: Math.max(0, Number(e.target.value) || 0) })} />
             </label>
           </div>
         </Section>
