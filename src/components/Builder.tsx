@@ -2,11 +2,10 @@ import { useMemo, useState } from 'react';
 import { FAMILY_BY_ID } from '../lib/genres';
 import { defaultRule } from '../lib/generator';
 import { MOODS } from '../lib/moods';
-import { SORT_LABELS } from '../lib/ordering';
 import type { Rule, SortMode, Source } from '../lib/types';
 import { useStore } from '../store';
 import PlaylistPreview from './PlaylistPreview';
-import { ChipSelect, RangeField, type Option } from './ui';
+import { ChipSelect, RangeField, SortOptions, type Option } from './ui';
 
 const PRESETS: { label: string; rule: Partial<Rule> }[] = [
   { label: '🏃 Running', rule: { energy: [0.7, 1], tempo: [140, 190], sort: 'harmonic', maxTracks: 60 } },
@@ -107,6 +106,25 @@ export default function Builder({ initialRule }: { initialRule: Rule | null }) {
             </button>
           ))}
         </div>
+
+        <Section title="Mise en forme">
+          <label className="field">
+            <span>Ordre</span>
+            <select value={rule.sort} onChange={(e) => set({ sort: e.target.value as SortMode })}>
+              <SortOptions exclude={index.hasHistory || rule.sort === 'plays_desc' ? [] : ['plays_desc']} />
+            </select>
+          </label>
+          <div className="row">
+            <label className="field">
+              <span>Nombre de titres</span>
+              <input type="number" min={5} max={500} value={rule.maxTracks} onChange={(e) => set({ maxTracks: Math.max(1, Number(e.target.value) || 50) })} />
+            </label>
+            <label className="field">
+              <span>Max par artiste</span>
+              <input type="number" min={0} max={50} value={rule.maxPerArtist} title="0 = illimité" onChange={(e) => set({ maxPerArtist: Math.max(0, Number(e.target.value) || 0) })} />
+            </label>
+          </div>
+        </Section>
 
         <Section title="Genres">
           <ChipSelect
@@ -266,29 +284,6 @@ export default function Builder({ initialRule }: { initialRule: Rule | null }) {
             <span>Durée max d’un titre (min)</span>
             <input type="number" min={1} max={30} value={rule.maxDurationMin ?? ''} placeholder="illimitée" onChange={(e) => set({ maxDurationMin: e.target.value ? Number(e.target.value) : undefined })} />
           </label>
-        </Section>
-
-        <Section title="Mise en forme">
-          <label className="field">
-            <span>Ordre</span>
-            <select value={rule.sort} onChange={(e) => set({ sort: e.target.value as SortMode })}>
-              {Object.entries(SORT_LABELS).map(([k, v]) => (
-                <option key={k} value={k}>
-                  {v}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="row">
-            <label className="field">
-              <span>Nombre de titres</span>
-              <input type="number" min={5} max={500} value={rule.maxTracks} onChange={(e) => set({ maxTracks: Math.max(1, Number(e.target.value) || 50) })} />
-            </label>
-            <label className="field">
-              <span>Max par artiste</span>
-              <input type="number" min={0} max={50} value={rule.maxPerArtist} title="0 = illimité" onChange={(e) => set({ maxPerArtist: Math.max(0, Number(e.target.value) || 0) })} />
-            </label>
-          </div>
         </Section>
 
         <button

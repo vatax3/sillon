@@ -109,7 +109,14 @@ export type SortMode =
   | 'energy_asc'
   | 'energy_arc'
   | 'tempo_asc'
-  | 'harmonic';
+  | 'harmonic'
+  | 'artist'
+  | 'artist_blocks'
+  | 'album'
+  | 'title'
+  | 'plays_desc'
+  | 'energy_desc'
+  | 'tempo_desc';
 
 export type Range = [number, number];
 

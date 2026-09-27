@@ -3,7 +3,7 @@ import { cleanTag, familyOfTag, profileFromTags } from './genres';
 import { capPerArtist, defaultRule, describeRule, generate } from './generator';
 import { buildIndex } from './indexer';
 import { moodsFromFeatures } from './moods';
-import { camelotLabel, energyArc, harmonicOrder, keyCompatibility, tempoDistance, toCamelot } from './ordering';
+import { camelotLabel, energyArc, harmonicOrder, keyCompatibility, SORT_GROUPS, SORT_LABELS, sortTracks, tempoDistance, toCamelot } from './ordering';
 import { canonicalTitle, computeStats } from './stats';
 import { buildSuggestions, kmeans } from './suggestions';
 import type { AudioFeatures, FeatureStore, Library, TagStore, Track } from './types';
@@ -126,6 +126,29 @@ describe('camelot', () => {
     const peak = arc.indexOf(Math.max(...arc));
     expect(peak).toBeGreaterThan(arc.length * 0.4);
     expect(peak).toBeLessThan(arc.length * 0.9);
+  });
+
+  it('trie par artiste, puis par discographie', () => {
+    const { index } = makeLibrary(60);
+    const out = sortTracks(index.tracks, 'artist', 1);
+    const names = out.map((t) => t.track.artists[0].name);
+    // Tri naturel : « Artist 2 » avant « Artist 10 ».
+    expect(names.indexOf('Artist 2')).toBeLessThan(names.indexOf('Artist 10'));
+    expect([...names].sort(new Intl.Collator('fr', { numeric: true }).compare)).toEqual(names);
+    const dates = out.filter((t) => t.track.artists[0].name === 'Artist 3').map((t) => t.track.album.releaseDate);
+    expect([...dates].sort()).toEqual(dates);
+  });
+
+  it('regroupe chaque artiste en un seul bloc', () => {
+    const { index } = makeLibrary(60);
+    const ids = sortTracks(index.tracks, 'artist_blocks', 7).map((t) => t.track.artists[0].id);
+    const blocks = ids.filter((id, i) => id !== ids[i - 1]);
+    expect(new Set(blocks).size).toBe(blocks.length);
+    expect(ids).toHaveLength(60);
+  });
+
+  it('liste chaque mode d’ordre dans un groupe', () => {
+    expect(SORT_GROUPS.flatMap((g) => g.modes).sort()).toEqual(Object.keys(SORT_LABELS).sort());
   });
 });
 

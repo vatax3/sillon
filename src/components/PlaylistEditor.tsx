@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { dedupeItems, decodeEntities, moveItem, moveKeys, newKey, summarize, UndoStack, type EditorItem } from '../lib/editor';
 import type { EnrichedTrack } from '../lib/indexer';
 import { isAbort } from '../lib/http';
-import { mulberry32, shuffle, SORT_LABELS, sortTracks } from '../lib/ordering';
+import { mulberry32, shuffle, sortTracks } from '../lib/ordering';
 import * as sp from '../lib/spotify';
 import type { SortMode } from '../lib/types';
 import { PlaylistConflictError, useStore } from '../store';
-import { AsyncButton, totalDuration } from './ui';
+import { AsyncButton, SortOptions, totalDuration } from './ui';
 
 interface Loaded {
   name: string;
@@ -241,13 +241,7 @@ export default function PlaylistEditor({ playlistId, onClose }: { playlistId: st
             <>
               <select value={sortMode} onChange={(e) => e.target.value && applySort(e.target.value as SortMode)} aria-label="Trier">
                 <option value="">Trier…</option>
-                {Object.entries(SORT_LABELS)
-                  .filter(([k]) => k !== 'shuffle')
-                  .map(([k, v]) => (
-                    <option key={k} value={k}>
-                      {v}
-                    </option>
-                  ))}
+                <SortOptions exclude={['shuffle']} />
               </select>
               <button className="ghost small" onClick={() => setItems(shuffle(items, mulberry32(Date.now())))}>
                 Mélanger

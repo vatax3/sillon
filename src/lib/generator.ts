@@ -1,7 +1,7 @@
 import { FAMILY_BY_ID } from './genres';
 import type { EnrichedTrack, LibraryIndex } from './indexer';
 import { MOOD_BY_ID } from './moods';
-import { sortTracks, SORT_LABELS } from './ordering';
+import { SELECTING_SORTS, sortTracks, SORT_LABELS } from './ordering';
 import type { AudioFeatures, Range, Rule, SavedPlaylist } from './types';
 
 export const defaultRule = (): Rule => ({
@@ -123,9 +123,8 @@ export function generate(index: LibraryIndex, rule: Rule, pool?: Set<string>): G
   // Sélection d'abord (aléatoire ou par affinité), mise en ordre ensuite :
   // sinon « énergie croissante » + limite 50 ne garderait que les 50 titres les plus calmes.
   const selectionOrder = sortTracks(matched, rule.sort === 'affinity' ? 'affinity' : 'shuffle', rule.seed);
-  const chronological = ['added_desc', 'release_asc', 'release_desc'].includes(rule.sort);
-  // Pour les tris chronologiques, on veut les plus récents/anciens de tout le filtre.
-  const picked = chronological
+  // Pour les tris chronologiques ou par écoutes, on veut les plus récents/anciens/écoutés de tout le filtre.
+  const picked = SELECTING_SORTS.includes(rule.sort)
     ? capPerArtist(sortTracks(matched, rule.sort, rule.seed), rule.maxPerArtist, room)
     : capPerArtist(selectionOrder, rule.maxPerArtist, room);
   const tracks = sortTracks([...pinned, ...picked], rule.sort, rule.seed);

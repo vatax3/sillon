@@ -3,10 +3,30 @@ import { togglePreview, usePreview } from '../lib/preview';
 import { useStore } from '../store';
 import type { EnrichedTrack } from '../lib/indexer';
 import { MOOD_BY_ID } from '../lib/moods';
-import { camelotLabel, toCamelot } from '../lib/ordering';
+import { camelotLabel, SORT_GROUPS, SORT_LABELS, toCamelot } from '../lib/ordering';
 import { trackUrl } from '../lib/spotify';
 import type { Bar } from '../lib/stats';
-import type { Range } from '../lib/types';
+import type { Range, SortMode } from '../lib/types';
+
+// ---------- Options d'ordre (à placer dans un <select>) ----------
+
+export function SortOptions({ exclude = [] }: { exclude?: SortMode[] }) {
+  return (
+    <>
+      {SORT_GROUPS.map((g) => (
+        <optgroup key={g.label} label={g.label}>
+          {g.modes
+            .filter((m) => !exclude.includes(m))
+            .map((m) => (
+              <option key={m} value={m}>
+                {SORT_LABELS[m]}
+              </option>
+            ))}
+        </optgroup>
+      ))}
+    </>
+  );
+}
 
 // ---------- Barres horizontales (une seule série → une seule teinte, valeur au bout) ----------
 

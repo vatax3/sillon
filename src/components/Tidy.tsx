@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { FAMILY_BY_ID } from '../lib/genres';
 import type { EnrichedTrack } from '../lib/indexer';
 import { MOOD_BY_ID } from '../lib/moods';
-import { SORT_LABELS, sortTracks } from '../lib/ordering';
+import { sortTracks } from '../lib/ordering';
 import { artistUrl, playlistUrl, trackUrl } from '../lib/spotify';
 import {
   dedupeIds,
@@ -17,7 +17,7 @@ import {
 } from '../lib/tools';
 import type { Library, SortMode } from '../lib/types';
 import { useStore } from '../store';
-import { AsyncButton, PlaylistPicker, SubTabs, TrackRow, useSelection } from './ui';
+import { AsyncButton, PlaylistPicker, SortOptions, SubTabs, TrackRow, useSelection } from './ui';
 
 type View = 'notliked' | 'orphans' | 'health' | 'follow' | 'backups';
 
@@ -371,11 +371,7 @@ function Health() {
         <div className="row wrap">
           <PlaylistPicker value={sortId} onChange={setSortId} />
           <select value={sortMode} onChange={(e) => setSortMode(e.target.value as SortMode)}>
-            {Object.entries(SORT_LABELS).map(([k, v]) => (
-              <option key={k} value={k}>
-                {v}
-              </option>
-            ))}
+            <SortOptions />
           </select>
           <AsyncButton
             className="primary small"

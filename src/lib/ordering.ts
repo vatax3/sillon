@@ -116,6 +116,25 @@ export function spreadArtists(tracks: EnrichedTrack[]): EnrichedTrack[] {
 
 const byDate = (s?: string) => (s ? Date.parse(s) : 0);
 
+const collator = new Intl.Collator('fr', { sensitivity: 'base', numeric: true });
+const mainArtist = (t: EnrichedTrack) => t.track.artists[0]?.name ?? '';
+
+/** Discographie : albums du plus ancien au plus récent, titres regroupés par album. */
+const byDiscography = (a: EnrichedTrack, b: EnrichedTrack) =>
+  (a.track.album.releaseDate || '9999').localeCompare(b.track.album.releaseDate || '9999') ||
+  collator.compare(a.track.album.name, b.track.album.name) ||
+  collator.compare(a.track.name, b.track.name);
+
+/** Blocs par artiste (artistes dans un ordre aléatoire), discographie dans chaque bloc. */
+export function artistBlocks(tracks: EnrichedTrack[], rand: () => number): EnrichedTrack[] {
+  const groups = new Map<string, EnrichedTrack[]>();
+  for (const t of tracks) {
+    const k = t.track.artists[0]?.id ?? '';
+    groups.set(k, [...(groups.get(k) ?? []), t]);
+  }
+  return shuffle([...groups.values()], rand).flatMap((g) => g.sort(byDiscography));
+}
+
 export function sortTracks(tracks: EnrichedTrack[], mode: SortMode, seed: number): EnrichedTrack[] {
   const rand = mulberry32(seed);
   const features = (t: EnrichedTrack) => t.features;
@@ -141,8 +160,27 @@ export function sortTracks(tracks: EnrichedTrack[], mode: SortMode, seed: number
       return energyArc(tracks);
     case 'harmonic':
       return harmonicOrder(tracks);
+    case 'artist':
+      return [...tracks].sort((a, b) => collator.compare(mainArtist(a), mainArtist(b)) || byDiscography(a, b));
+    case 'artist_blocks':
+      return artistBlocks(tracks, rand);
+    case 'album':
+      return [...tracks].sort(
+        (a, b) => collator.compare(a.track.album.name, b.track.album.name) || collator.compare(mainArtist(a), mainArtist(b)) || collator.compare(a.track.name, b.track.name),
+      );
+    case 'title':
+      return [...tracks].sort((a, b) => collator.compare(a.track.name, b.track.name) || collator.compare(mainArtist(a), mainArtist(b)));
+    case 'plays_desc':
+      return [...tracks].sort((a, b) => (b.listen?.plays ?? 0) - (a.listen?.plays ?? 0) || b.affinity - a.affinity);
+    case 'energy_desc':
+      return [...tracks].sort((a, b) => (features(b)?.energy ?? -1) - (features(a)?.energy ?? -1));
+    case 'tempo_desc':
+      return [...tracks].sort((a, b) => (features(b)?.tempo ?? -1) - (features(a)?.tempo ?? -1));
   }
 }
+
+/** Tris qui choisissent eux-mêmes les titres à garder quand le filtre dépasse la limite. */
+export const SELECTING_SORTS: SortMode[] = ['added_desc', 'release_asc', 'release_desc', 'plays_desc'];
 
 export const SORT_LABELS: Record<SortMode, string> = {
   shuffle: 'Aléatoire (artistes espacés)',
@@ -154,4 +192,18 @@ export const SORT_LABELS: Record<SortMode, string> = {
   energy_arc: 'Arc d’énergie (montée, pic, descente)',
   tempo_asc: 'Tempo croissant',
   harmonic: 'Mix DJ (tonalité + tempo)',
+  artist: 'Par artiste (A → Z)',
+  artist_blocks: 'Par artiste (blocs dans le désordre)',
+  album: 'Par album (A → Z)',
+  title: 'Par titre (A → Z)',
+  plays_desc: 'Les plus écoutés d’abord',
+  energy_desc: 'Énergie décroissante',
+  tempo_desc: 'Tempo décroissant',
 };
+
+export const SORT_GROUPS: { label: string; modes: SortMode[] }[] = [
+  { label: 'Général', modes: ['shuffle', 'affinity', 'plays_desc'] },
+  { label: 'Alphabétique', modes: ['artist', 'artist_blocks', 'album', 'title'] },
+  { label: 'Chronologique', modes: ['added_desc', 'release_asc', 'release_desc'] },
+  { label: 'Son', modes: ['energy_asc', 'energy_desc', 'energy_arc', 'tempo_asc', 'tempo_desc', 'harmonic'] },
+];
