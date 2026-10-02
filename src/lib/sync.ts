@@ -1,3 +1,4 @@
+import { isAbort, throttledEach } from './http';
 import * as sp from './spotify';
 import type { Artist, Library, PlaylistMeta, Track, TimeRange } from './types';
 import { TIME_RANGES } from './types';
@@ -57,7 +58,7 @@ export async function syncLibrary(
   };
 
   onProgress({ label: 'Profil', done: 0 });
-  const me = await sp.getMe();
+  const me = await sp.getMe(signal);
 
   onProgress({ label: 'Titres likés', done: 0 });
   const saved = await sp.getSavedTracks((done, total) => onProgress({ label: 'Titres likés', done, total }), signal);
@@ -83,29 +84,40 @@ export async function syncLibrary(
   });
   const toSync = playlists.filter((p) => p.synced);
   const playlistItems: Record<string, string[]> = {};
-  for (const [i, pl] of toSync.entries()) {
-    onProgress({ label: `Playlist « ${pl.name} »`, done: i, total: toSync.length });
-    try {
-      const ids: string[] = [];
-      for (const raw of await sp.getPlaylistTracks(pl.id, signal)) {
-        const t = upsert(raw);
-        if (!t) continue;
-        ids.push(t.id);
-        if (!t.playlists.includes(pl.id)) t.playlists.push(pl.id);
+  // Plusieurs playlists à la fois (débit borné) : la plupart tiennent en une ou deux pages.
+  let loaded = 0;
+  onProgress({ label: 'Contenu des playlists', done: 0, total: toSync.length });
+  await throttledEach(
+    toSync,
+    async (pl) => {
+      try {
+        const raws = await sp.getPlaylistTracks(pl.id, signal);
+        const ids: string[] = [];
+        for (const raw of raws) {
+          const t = upsert(raw);
+          if (!t) continue;
+          ids.push(t.id);
+          if (!t.playlists.includes(pl.id)) t.playlists.push(pl.id);
+        }
+        playlistItems[pl.id] = ids;
+      } catch (e) {
+        if (signal?.aborted || isAbort(e)) throw e;
+        pl.synced = false; // playlist illisible : on continue sans elle
       }
-      playlistItems[pl.id] = ids;
-    } catch (e) {
-      if (signal?.aborted) throw e;
-      pl.synced = false; // playlist illisible : on continue sans elle
-    }
-  }
+      onProgress({ label: `Playlist « ${pl.name} »`, done: ++loaded, total: toSync.length });
+    },
+    { concurrency: 3, minIntervalMs: 80, signal },
+  );
+  // Ordre stable des playlists de chaque titre, quel que soit l'ordre d'arrivée.
+  const order = new Map(toSync.map((p, i) => [p.id, i]));
+  for (const t of Object.values(tracks)) if (t.playlists.length > 1) t.playlists.sort((a, b) => order.get(a)! - order.get(b)!);
 
-  for (const [i, range] of TIME_RANGES.entries()) {
-    onProgress({ label: 'Tops personnels', done: i, total: TIME_RANGES.length });
-    const [topTracks, topArtists] = await Promise.all([
-      sp.getTop('tracks', range, signal),
-      sp.getTop('artists', range, signal),
-    ]);
+  onProgress({ label: 'Tops personnels', done: 0 });
+  const tops = await Promise.all(
+    TIME_RANGES.map((range) => Promise.all([sp.getTop('tracks', range, signal), sp.getTop('artists', range, signal)])),
+  );
+  TIME_RANGES.forEach((range, i) => {
+    const [topTracks, topArtists] = tops[i];
     topTracks.forEach((raw, rank) => {
       const t = upsert(raw);
       if (t) t.topRanks[range as TimeRange] = rank + 1;
@@ -113,7 +125,7 @@ export async function syncLibrary(
     topArtists.forEach((raw, rank) => {
       upsertArtist(raw).topRanks[range] = rank + 1;
     });
-  }
+  });
 
   onProgress({ label: 'Écoutes récentes', done: 0 });
   for (const row of await sp.getRecentlyPlayed(signal)) {

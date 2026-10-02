@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { FAMILY_BY_ID } from '../lib/genres';
-import { defaultRule } from '../lib/generator';
+import { defaultRule, formatMinutes } from '../lib/generator';
 import { MOODS } from '../lib/moods';
 import type { Rule, SortMode, Source } from '../lib/types';
 import { useStore } from '../store';
@@ -35,6 +35,8 @@ const LAST_PLAYED = [
 ];
 
 const lastPlayedValue = (r: Rule) => (r.playedWithinDays ? `w${r.playedWithinDays}` : r.notPlayedForDays ? `n${r.notPlayedForDays}` : '');
+
+const DURATIONS = [30, 45, 60, 90, 120, 180];
 
 const SOURCES: { id: Source; label: string }[] = [
   { id: 'liked', label: 'Titres likés' },
@@ -114,16 +116,31 @@ export default function Builder({ initialRule }: { initialRule: Rule | null }) {
               <SortOptions exclude={index.hasHistory || rule.sort === 'plays_desc' ? [] : ['plays_desc']} />
             </select>
           </label>
-          <div className="row">
+          <div className="row wrap">
             <label className="field">
               <span>Nombre de titres</span>
               <input type="number" min={5} max={500} value={rule.maxTracks} onChange={(e) => set({ maxTracks: Math.max(1, Number(e.target.value) || 50) })} />
+            </label>
+            <label className="field">
+              <span>Durée max</span>
+              <select value={rule.maxMinutes ?? 0} onChange={(e) => set({ maxMinutes: Number(e.target.value) || undefined })}>
+                <option value={0}>illimitée</option>
+                {DURATIONS.map((m) => (
+                  <option key={m} value={m}>
+                    {formatMinutes(m)}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="field">
               <span>Max par artiste</span>
               <input type="number" min={0} max={50} value={rule.maxPerArtist || ''} placeholder="illimité" onChange={(e) => set({ maxPerArtist: Math.max(0, Number(e.target.value) || 0) })} />
             </label>
           </div>
+          <label className="check">
+            <input type="checkbox" checked={!rule.keepVersions} onChange={(e) => set({ keepVersions: !e.target.checked || undefined })} />
+            Sans doublons (une seule version de chaque morceau : remaster, single / album…)
+          </label>
         </Section>
 
         <Section title="Genres">

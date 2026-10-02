@@ -231,10 +231,16 @@ function sendFile(c: Context, file: string) {
 }
 
 app.get('*', (c) => {
-  const rel = decodeURIComponent(new URL(c.req.url).pathname);
+  let rel: string;
+  try {
+    rel = decodeURIComponent(new URL(c.req.url).pathname);
+  } catch {
+    return c.text('URL invalide', 400);
+  }
   const file = path.resolve(config.staticDir, `.${rel}`);
-  // Protection contre la sortie du dossier (…/../…).
-  if (file.startsWith(config.staticDir) && fs.existsSync(file) && fs.statSync(file).isFile()) return sendFile(c, file);
+  // Protection contre la sortie du dossier (…/%2e%2e/…) : le séparateur final évite qu'un dossier voisin
+  // au nom proche (dist-server à côté de dist) passe le test.
+  if (file.startsWith(config.staticDir + path.sep) && fs.existsSync(file) && fs.statSync(file).isFile()) return sendFile(c, file);
   const index = path.join(config.staticDir, 'index.html');
   if (!fs.existsSync(index)) return c.text('Interface non construite (npm run build).', 500);
   return sendFile(c, index);

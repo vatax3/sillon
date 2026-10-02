@@ -4,6 +4,7 @@ import { withDefaults, type Automations, type JobKind, type Schedule } from './l
 import { localPersistence, serverPersistence } from './lib/persistence';
 import * as remote from './lib/remote';
 import { SCOPES } from './lib/scopes';
+import { dedupeSongs, dedupeUris, SongSet, trackRef } from './lib/dedupe';
 import { applyManualEdits } from './lib/editor';
 import { fetchArtistTags, fetchAudioFeatures } from './lib/enrich';
 import { livingRefresh } from './lib/generator';
@@ -48,13 +49,15 @@ interface Store {
   enrich: () => Promise<void>;
   cancel: () => void;
   createPlaylist: (p: { name: string; description: string; isPublic: boolean; tracks: EnrichedTrack[]; rule: Rule; pool?: string[] }) => Promise<SavedPlaylist>;
-  createSimplePlaylist: (name: string, description: string, uris: string[]) => Promise<string>;
+  /** Crée une playlist sans doublons (sauf `exact`, ex. restauration) ; renvoie son id et le nombre de titres envoyés. */
+  createSimplePlaylist: (name: string, description: string, uris: string[], opts?: { exact?: boolean }) => Promise<{ id: string; count: number }>;
   refreshSaved: (s: SavedPlaylist) => Promise<void>;
   forgetSaved: (id: string) => void;
   updateSavedRule: (id: string, rule: Rule) => void;
   likeTracks: (trackIds: string[]) => Promise<void>;
   followArtists: (artistIds: string[]) => Promise<void>;
-  addToPlaylist: (playlistId: string, trackIds: string[]) => Promise<void>;
+  /** Ajoute les titres absents de la playlist (ni le même titre, ni une autre version) ; renvoie le nombre ajouté. */
+  addToPlaylist: (playlistId: string, trackIds: string[]) => Promise<number>;
   rewritePlaylist: (playlistId: string, trackIds: string[], reason: string) => Promise<void>;
   createBackup: () => Promise<void>;
   restoreFromBackup: (backupId: string, playlistId: string) => Promise<void>;
@@ -356,8 +359,9 @@ export function StoreProvider({ children, onLogout, server = null }: { children:
       const f: FeatureStore = { ...features };
       const t: TagStore = { ...tags };
       let lastFlush = 0;
+      // Chaque écriture reconstruit l'index de toute la bibliothèque : pas plus d'une toutes les 5 s.
       const flush = (force = false) => {
-        if (!force && Date.now() - lastFlush < 2000) return;
+        if (!force && Date.now() - lastFlush < 5000) return;
         lastFlush = Date.now();
         setFeatures({ ...f });
         setTags({ ...t });
@@ -424,10 +428,17 @@ export function StoreProvider({ children, onLogout, server = null }: { children:
     return entry;
   };
 
-  const createSimplePlaylist = async (name: string, description: string, uris: string[]) => {
+  /** Référence d'un titre connu de la bibliothèque, pour reconnaître ses autres versions. */
+  const refOfUri = (uri: string) => {
+    const t = libRef.current?.tracks[uri.replace('spotify:track:', '')];
+    return t ? trackRef(t) : undefined;
+  };
+
+  const createSimplePlaylist: Store['createSimplePlaylist'] = async (name, description, uris, opts) => {
+    const list = opts?.exact ? uris : dedupeUris(uris, refOfUri);
     const created = await sp.createPlaylist(`${settings.playlistPrefix}${name}`.slice(0, 100), description.slice(0, 300), settings.publicByDefault);
-    await sp.setPlaylistItems(created.id, uris);
-    return created.id;
+    await sp.setPlaylistItems(created.id, list);
+    return { id: created.id, count: list.length };
   };
 
   const refreshSaved = async (s: SavedPlaylist) => {
@@ -496,7 +507,18 @@ export function StoreProvider({ children, onLogout, server = null }: { children:
     patchLibrary((lib) => artistIds.forEach((id) => lib.artists[id] && (lib.artists[id].followed = true)));
   };
 
-  const addToPlaylist = async (playlistId: string, trackIds: string[]) => {
+  const addToPlaylist = async (playlistId: string, ids: string[]) => {
+    const lib = libRef.current;
+    // Déjà présents (contenu connu si la playlist est synchronisée) : on ne les rajoute pas.
+    const present = new SongSet();
+    const presentIds = new Set(lib?.playlistItems?.[playlistId] ?? []);
+    for (const id of presentIds) if (lib?.tracks[id]) present.add(trackRef(lib.tracks[id]));
+    const trackIds = dedupeSongs(
+      [...new Set(ids)].filter((id) => !presentIds.has(id)),
+      (id) => (lib?.tracks[id] ? trackRef(lib.tracks[id]) : undefined),
+      present,
+    ).kept;
+    if (!trackIds.length) return 0;
     await sp.addPlaylistItems(playlistId, trackIds.map((id) => `spotify:track:${id}`));
     patchLibrary((lib) => {
       lib.playlistItems ??= {};
@@ -508,6 +530,7 @@ export function StoreProvider({ children, onLogout, server = null }: { children:
       const meta = lib.playlists.find((p) => p.id === playlistId);
       if (meta) meta.trackCount += trackIds.length;
     });
+    return trackIds.length;
   };
 
   /** Remplace le contenu d'une playlist, après une sauvegarde automatique. */
@@ -556,7 +579,7 @@ export function StoreProvider({ children, onLogout, server = null }: { children:
       setNotice(`« ${p.name} » restaurée.`);
     } catch (e) {
       if (!(e instanceof HttpError) || (e.status !== 404 && e.status !== 403)) throw e;
-      await createSimplePlaylist(`${p.name} (restaurée)`, `Restaurée par Sillon depuis la sauvegarde du ${new Date(b!.createdAt).toLocaleString('fr-FR')}`, p.trackIds.map((t) => `spotify:track:${t}`));
+      await createSimplePlaylist(`${p.name} (restaurée)`, `Restaurée par Sillon depuis la sauvegarde du ${new Date(b!.createdAt).toLocaleString('fr-FR')}`, p.trackIds.map((t) => `spotify:track:${t}`), { exact: true });
       setNotice(`« ${p.name} » recréée (${p.trackIds.length} titres). Resynchronise pour la voir.`);
     }
   };

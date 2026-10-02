@@ -223,11 +223,14 @@ export const totalDuration = (tracks: EnrichedTrack[]) => {
 export function TrackList({
   tracks,
   onRemove,
+  removeHint,
   onPlay,
   showDjInfo,
 }: {
   tracks: EnrichedTrack[];
   onRemove?: (id: string) => void;
+  /** Infobulle du bouton de retrait. */
+  removeHint?: string;
   /** Lance la lecture de la liste à partir de ce titre. */
   onPlay?: (index: number) => void;
   showDjInfo?: boolean;
@@ -271,7 +274,7 @@ export function TrackList({
             )}
             <span className="tl-dur">{fmtDuration(t.track.durationMs)}</span>
             {onRemove && (
-              <button className="ghost small icon" onClick={() => onRemove(t.track.id)} aria-label={`Retirer ${t.track.name}`}>
+              <button className="ghost small icon" onClick={() => onRemove(t.track.id)} aria-label={`Retirer ${t.track.name}`} title={removeHint ?? 'Retirer'}>
                 ✕
               </button>
             )}

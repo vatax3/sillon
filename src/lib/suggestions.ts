@@ -1,4 +1,4 @@
-import { defaultRule, generate } from './generator';
+import { defaultRule, filterTracks } from './generator';
 import { FAMILY_BY_ID } from './genres';
 import type { EnrichedTrack, LibraryIndex } from './indexer';
 import { MOOD_BY_ID, MOODS } from './moods';
@@ -151,7 +151,8 @@ function ambianceSuggestions(index: LibraryIndex, seed: number): Suggestion[] {
 export function buildSuggestions(index: LibraryIndex, artistName: (id: string) => string, seed = 42): Suggestion[] {
   const out: Suggestion[] = [];
   const push = (s: Omit<Suggestion, 'size'>) => {
-    const size = s.trackIds?.length ?? generate(index, { ...s.rule, maxTracks: 10_000, maxPerArtist: 0 }).matchedCount;
+    // Seul le nombre de titres compte ici : pas besoin de tirer et d'ordonner la playlist.
+    const size = s.trackIds?.length ?? filterTracks(index, s.rule).matched.length;
     if (size >= MIN_SIZE) out.push({ ...s, size });
   };
 

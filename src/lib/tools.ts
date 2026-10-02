@@ -1,5 +1,6 @@
 // Outils de rangement : ce qui traîne dans les playlists sans être liké, les likés orphelins,
 // la santé des playlists (doublons, recouvrements), les sauvegardes et leurs différences.
+import { dedupeUris, trackRef } from './dedupe';
 import type { EnrichedTrack, LibraryIndex } from './indexer';
 import type { Library, PlaylistBackup } from './types';
 
@@ -21,9 +22,15 @@ export interface PlaylistHealth {
   id: string;
   name: string;
   size: number;
-  /** Nombre d'entrées en trop (un titre présent 3 fois compte pour 2). */
+  /** Nombre d'entrées en trop (un titre présent 3 fois compte pour 2), versions d'un même morceau comprises. */
   duplicates: number;
-  duplicateIds: string[];
+  /** Dont : autres versions d'un morceau déjà présent (remaster, single / album…). */
+  versions: number;
+}
+
+/** Contenu d'une playlist sans doublons : même titre, ou autre version d'un morceau déjà présent. */
+export function dedupePlaylist(lib: Library, ids: string[]): string[] {
+  return dedupeUris(ids, (id) => (lib.tracks[id] ? trackRef(lib.tracks[id]) : undefined));
 }
 
 export function playlistHealth(lib: Library): PlaylistHealth[] {
@@ -32,13 +39,9 @@ export function playlistHealth(lib: Library): PlaylistHealth[] {
     .filter((p) => p.synced && items[p.id])
     .map((p) => {
       const ids = items[p.id];
-      const seen = new Set<string>();
-      const dupes = new Set<string>();
-      for (const id of ids) {
-        if (seen.has(id)) dupes.add(id);
-        seen.add(id);
-      }
-      return { id: p.id, name: p.name, size: ids.length, duplicates: ids.length - seen.size, duplicateIds: [...dupes] };
+      const unique = new Set(ids).size;
+      const clean = dedupePlaylist(lib, ids).length;
+      return { id: p.id, name: p.name, size: ids.length, duplicates: ids.length - clean, versions: unique - clean };
     });
 }
 
@@ -70,11 +73,9 @@ export function playlistOverlaps(lib: Library, minContainment = 0.5, minShared =
   return out.sort((x, y) => y.containment - x.containment);
 }
 
-export const dedupeIds = (ids: string[]) => [...new Set(ids)];
-
-/** Union ordonnée de plusieurs playlists, sans doublons. */
+/** Union ordonnée de plusieurs playlists, sans doublons (ni deux versions d'un même morceau). */
 export function mergePlaylists(lib: Library, ids: string[]): string[] {
-  return dedupeIds(ids.flatMap((id) => lib.playlistItems?.[id] ?? []));
+  return dedupePlaylist(lib, ids.flatMap((id) => lib.playlistItems?.[id] ?? []));
 }
 
 /** Découpe une liste de titres selon une clé (famille, décennie…) ; les groupes trop petits sont écartés. */

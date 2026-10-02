@@ -139,7 +139,7 @@ export interface JobRun {
 /** État mémorisé entre exécutions (pour ne pas reproposer ni renotifier la même chose). */
 export interface AutoState {
   recommended: string[];
-  /** Clés artiste|titre des titres déjà recommandés (écartés avant même la recherche Spotify). */
+  /** Clés des titres déjà recommandés (songKey, ou nameKey pour les plus anciennes), écartés avant même la recherche Spotify. */
   recommendedNames: string[];
   radarSeen: string[];
   historyCursor: number;

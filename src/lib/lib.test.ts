@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { dedupeUris, songKey, songTitle } from './dedupe';
 import { cleanTag, familyOfTag, profileFromTags } from './genres';
 import { capPerArtist, defaultRule, describeRule, generate } from './generator';
 import { buildIndex } from './indexer';
 import { moodsFromFeatures } from './moods';
 import { camelotLabel, energyArc, harmonicOrder, keyCompatibility, SORT_GROUPS, SORT_LABELS, sortTracks, tempoDistance, toCamelot } from './ordering';
-import { canonicalTitle, computeStats } from './stats';
+import { computeStats } from './stats';
 import { buildSuggestions, kmeans } from './suggestions';
 import type { AudioFeatures, FeatureStore, Library, TagStore, Track } from './types';
 
@@ -152,6 +153,25 @@ describe('camelot', () => {
   });
 });
 
+// ---------- Dédoublonnage ----------
+
+describe('dedupe', () => {
+  it('reconnaît les versions d’édition mais garde les interprétations distinctes', () => {
+    const same = ['Karma Police', 'Karma Police - Remastered 2017', 'Karma Police (Remastered)', 'Karma Police [2008 Remaster]', 'Karma Police - Single Version', 'Karma Police (feat. X)', 'Karma Police - Radio Edit'];
+    for (const t of same) expect(songTitle(t)).toBe('karma police');
+    for (const t of ['Karma Police - Live', 'Karma Police (Live at Glastonbury)', 'Karma Police - Acoustic Version', 'Karma Police (Remix)', 'Karma Police (Taylor’s Version)']) {
+      expect(songTitle(t)).not.toBe('karma police');
+    }
+    expect(songTitle('Karma Police (Live)')).toBe(songTitle('Karma Police - Live'));
+    expect(songKey('Song', 'A')).not.toBe(songKey('Song', 'B'));
+  });
+
+  it('dédoublonne des URIs en gardant l’ordre', () => {
+    const info: Record<string, { name: string; artist: string }> = { a: { name: 'X', artist: 'A' }, b: { name: 'X - Remastered', artist: 'A' } };
+    expect(dedupeUris(['a', 'c', 'a', 'b', 'c', 'd'], (u) => info[u])).toEqual(['a', 'c', 'd']);
+  });
+});
+
 // ---------- Générateur ----------
 
 describe('generator', () => {
@@ -176,6 +196,45 @@ describe('generator', () => {
   it('applique les plages audio et les années', () => {
     const r = generate(index, { ...defaultRule(), energy: [0.7, 1], yearMin: 1980, yearMax: 1999, maxTracks: 500, maxPerArtist: 0 });
     expect(r.tracks.every((t) => t.features!.energy >= 0.7 && t.year! >= 1980 && t.year! <= 1999)).toBe(true);
+  });
+
+  it('ne garde qu’une version de chaque morceau, la likée de préférence', () => {
+    const l = structuredClone(lib);
+    // t1 n'est pas liké ici ; sa version remaster l'est.
+    delete l.tracks.t1.likedAt;
+    l.tracks.v1 = { ...l.tracks.t1, id: 'v1', uri: 'spotify:track:v1', name: `${l.tracks.t1.name} - 2011 Remaster`, likedAt: new Date().toISOString() };
+    l.tracks.live1 = { ...l.tracks.t1, id: 'live1', uri: 'spotify:track:live1', name: `${l.tracks.t1.name} (Live)` };
+    l.tracks.isrc2 = { ...l.tracks.t2, id: 'isrc2', uri: 'spotify:track:isrc2', name: 'Autre titre', isrc: 'XX123' };
+    l.tracks.t2.isrc = 'xx123';
+    const idx = buildIndex(l, {}, {});
+    const all = { ...defaultRule(), maxTracks: 500, maxPerArtist: 0 };
+    const ids = generate(idx, all).tracks.map((t) => t.track.id);
+    expect(ids).toContain('v1');
+    expect(ids).not.toContain('t1');
+    expect(ids).toContain('live1');
+    expect(ids.filter((id) => id === 't2' || id === 'isrc2')).toHaveLength(1);
+    expect(generate(idx, all).duplicatesRemoved).toBe(2);
+    const keep = generate(idx, { ...all, keepVersions: true });
+    expect(keep.tracks).toHaveLength(Object.keys(l.tracks).length);
+    expect(keep.duplicatesRemoved).toBe(0);
+    // Un titre épinglé l'emporte sur ses autres versions.
+    expect(generate(idx, { ...all, pinned: ['t1'] }).tracks.map((t) => t.track.id)).not.toContain('v1');
+  });
+
+  it('respecte la durée maximale', () => {
+    const r = generate(index, { ...defaultRule(), maxTracks: 500, maxPerArtist: 0, maxMinutes: 30 });
+    const total = r.tracks.reduce((s, t) => s + t.track.durationMs, 0);
+    expect(total).toBeLessThanOrEqual(30 * 60_000);
+    expect(total).toBeGreaterThan(27 * 60_000);
+  });
+
+  it('retirer un titre ne rebat pas le reste du tirage', () => {
+    const rule = { ...defaultRule(), maxTracks: 20, seed: 3 };
+    const before = generate(index, rule).tracks.map((t) => t.track.id);
+    const after = generate(index, { ...rule, excluded: [before[0]] }).tracks.map((t) => t.track.id);
+    expect(after).toHaveLength(20);
+    expect(after).not.toContain(before[0]);
+    expect(before.filter((id) => !after.includes(id))).toEqual([before[0]]);
   });
 
   it('exclut les titres en rotation', () => {
@@ -227,7 +286,6 @@ describe('suggestions & stats', () => {
   });
 
   it('détecte les doublons de versions', () => {
-    expect(canonicalTitle('Karma Police (Remastered 2017)')).toBe(canonicalTitle('Karma Police - Live'));
     const { lib, index } = makeLibrary(10);
     const t = lib.tracks.t0;
     lib.tracks.dup = { ...t, id: 'dup', name: `${t.name} - Remastered` };

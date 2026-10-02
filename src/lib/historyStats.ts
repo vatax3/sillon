@@ -1,3 +1,4 @@
+import { dedupeSongs } from './dedupe';
 import { FLAG_NO_DURATION, FLAG_SKIPPED, type HistoryStore } from './history';
 import type { FeatureStore } from './types';
 
@@ -47,6 +48,15 @@ export interface Ranked<K> {
   key: K;
   ms: number;
   streams: number;
+}
+
+/** URIs Spotify d'un classement de titres, sans les titres inconnus de Spotify ni les doublons de versions. */
+export function rankedUris(h: HistoryStore, rows: Ranked<number>[]): string[] {
+  const tracks = rows.map((r) => h.tracks[r.key]).filter((t) => t && !t.key.startsWith('n:'));
+  const uris = new Set<string>();
+  return dedupeSongs(tracks, (t) => ({ name: t.name, artist: t.artist }))
+    .kept.map((t) => `spotify:track:${t.key}`)
+    .filter((u) => !uris.has(u) && uris.add(u));
 }
 
 export interface SkipRow {

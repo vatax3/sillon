@@ -27,6 +27,12 @@ describe('éditeur de playlist', () => {
     expect(uris(dedupeItems(list))).toEqual(['a', 'b', 'spotify:local:x', 'spotify:local:x']);
   });
 
+  it('dédoublonne aussi les versions d’un même morceau', () => {
+    const t = (uri: string, name: string, artists: string): EditorItem => ({ ...item(uri), name, artists });
+    const list = [t('1', 'Hey Jude', 'The Beatles'), t('2', 'Hey Jude - Remastered 2015', 'The Beatles, X'), t('3', 'Hey Jude (Live)', 'The Beatles'), t('4', 'Hey Jude', 'Wilson Pickett')];
+    expect(uris(dedupeItems(list))).toEqual(['1', '3', '4']);
+  });
+
   it('résume les modifications', () => {
     expect(summarize(['a', 'b', 'c'], ['a', 'b', 'c'])).toEqual({ added: 0, removed: 0, reordered: false });
     expect(summarize(['a', 'b', 'c'], ['c', 'a', 'b'])).toEqual({ added: 0, removed: 0, reordered: true });

@@ -5,11 +5,12 @@ import path from 'node:path';
 import { withDefaults, emptyAutoState, type AutoPlaylist, type Automations, type AutoState, type JobKind } from '../src/lib/automations';
 import { fetchArtistTags, fetchAudioFeatures } from '../src/lib/enrich';
 import { livingRefresh } from '../src/lib/generator';
-import { emptyHistory, mergePlays, nameKey, playsFromApi, type HistoryStore, type RawPlay } from '../src/lib/history';
-import { mostPlayedIds, timeMachine, topTracksWhere } from '../src/lib/historyStats';
+import { songKey } from '../src/lib/dedupe';
+import { emptyHistory, mergePlays, playsFromApi, type HistoryStore, type RawPlay } from '../src/lib/history';
+import { mostPlayedIds, rankedUris, timeMachine, topTracksWhere } from '../src/lib/historyStats';
 import { HttpError } from '../src/lib/http';
 import { artistsByImportance, buildIndex } from '../src/lib/indexer';
-import { radarArtists, releaseRadar } from '../src/lib/radar';
+import { radarArtists, radarTracks, releaseRadar } from '../src/lib/radar';
 import { knownSets, recommend, seedsFor } from '../src/lib/recommend';
 import { encode } from '../src/lib/serialize';
 import * as sp from '../src/lib/spotify';
@@ -201,7 +202,7 @@ async function discoveries(ctx: TaskContext): Promise<TaskResult> {
     return {
       ...st,
       recommended: [...recos.map((r) => r.spotify.id), ...st.recommended].slice(0, 2000),
-      recommendedNames: [...recos.map((r) => nameKey(r.artist, r.title)), ...st.recommendedNames].slice(0, 2000),
+      recommendedNames: [...recos.map((r) => songKey(r.title, r.artist)), ...st.recommendedNames].slice(0, 2000),
     };
   });
   await notify(userId, 'playlist', conf.name, `${recos.length} découvertes : ${recos.slice(0, 5).map((r) => `${r.artist} – ${r.title}`).join(', ')}…`, sp.playlistUrl(id));
@@ -213,11 +214,7 @@ async function radar(ctx: TaskContext): Promise<TaskResult> {
   const conf = automations(userId).radar;
   const { library, index } = loadIndex(userId);
   const releases = await releaseRadar(radarArtists(library, index), conf.days, (d, t) => ctx.progress('Sorties de tes artistes', d, t), signal);
-  const uris: string[] = [];
-  for (const r of releases) {
-    const tracks = await sp.getAlbumTracks(r.album.id, signal);
-    uris.push(...(conf.albumTracks === 'first3' && r.album.album_type === 'album' ? tracks.slice(0, 3) : tracks).map((t) => t.uri));
-  }
+  const uris = await radarTracks(releases, conf.albumTracks, signal);
   const date = new Date().toLocaleDateString('fr-FR', { timeZone: config.timezone });
   const id = await ensureAutoPlaylist(userId, 'radar', `${releases.length} sorties des ${conf.days} derniers jours de tes artistes — Sillon, ${date}`);
   await sp.setPlaylistItems(id, uris);
@@ -243,7 +240,7 @@ async function timeMachineTask({ userId }: TaskContext): Promise<TaskResult> {
   const years = timeMachine(history, now);
   const pick = years.find((y) => y.year === now.getFullYear() - 1) ?? years[0];
   if (!pick) throw new Error('Pas encore d’historique sur les années passées');
-  const uris = pick.tracks.map((r) => history.tracks[r.key].key).filter((k) => !k.startsWith('n:')).map((k) => `spotify:track:${k}`);
+  const uris = rankedUris(history, pick.tracks);
   const label = `${MONTHS[now.getMonth()]} ${pick.year}`;
   const id = await ensureAutoPlaylist(userId, 'timeMachine', `Ce que tu écoutais en ${label} — Sillon`);
   await sp.setPlaylistItems(id, uris);
@@ -259,7 +256,7 @@ async function monthlyTop({ userId }: TaskContext): Promise<TaskResult> {
   const from = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const to = new Date(now.getFullYear(), now.getMonth(), 1);
   const rows = topTracksWhere(history, { from: from.getTime(), to: to.getTime() }, undefined, conf.size);
-  const uris = rows.map((r) => history.tracks[r.key].key).filter((k) => !k.startsWith('n:')).map((k) => `spotify:track:${k}`);
+  const uris = rankedUris(history, rows);
   if (!uris.length) throw new Error('Aucune écoute le mois dernier');
   const label = `${MONTHS[from.getMonth()]} ${from.getFullYear()}`;
   const id = await ensureAutoPlaylist(userId, 'monthlyTop', `Mes titres les plus écoutés en ${label} — Sillon`);

@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { fetchAudioFeatures, normalizeName } from '../lib/enrich';
 import { computeHistoryStats } from '../lib/historyStats';
 import { isAbort } from '../lib/http';
-import { radarArtists, releaseRadar, type Release } from '../lib/radar';
+import { radarArtists, radarTracks, releaseRadar, type Release } from '../lib/radar';
 import { artistEssentials, featureCentroid, knownSets, rankBySound, recommend, seedsFor, type Recommendation, type Seed } from '../lib/recommend';
 import * as sp from '../lib/spotify';
 import type { AudioFeatures, FeatureStore } from '../lib/types';
@@ -229,8 +229,9 @@ function Recommendations() {
             <AsyncButton
               disabled={!target}
               onClick={async () => {
-                await store.addToPlaylist(target, targetList.map((r) => r.spotify.id));
-                store.say(`${targetList.length} titre(s) ajouté(s) à la playlist.`);
+                const added = await store.addToPlaylist(target, targetList.map((r) => r.spotify.id));
+                const skipped = targetList.length - added;
+                store.say(`${added} titre(s) ajouté(s) à la playlist${skipped ? ` (${skipped} déjà présent(s))` : ''}.`);
               }}
             >
               Ajouter
@@ -239,8 +240,8 @@ function Recommendations() {
               className="primary small"
               onClick={async () => {
                 const name = `Découvertes · ${new Date().toLocaleDateString('fr-FR')}`;
-                await store.createSimplePlaylist(name, `Recommandations ${result.label} — Sillon`, targetList.map((r) => r.spotify.uri));
-                store.say(`Playlist « ${name} » créée.`);
+                const { count } = await store.createSimplePlaylist(name, `Recommandations ${result.label} — Sillon`, targetList.map((r) => r.spotify.uri));
+                store.say(`Playlist « ${name} » créée (${count} titres).`);
               }}
             >
               Créer une playlist
@@ -296,13 +297,10 @@ function Radar() {
 
   const buildPlaylist = async () => {
     if (!result) return;
-    const uris: string[] = [];
-    for (const r of result.releases) {
-      for (const t of await sp.getAlbumTracks(r.album.id)) uris.push(t.uri);
-    }
+    const uris = await radarTracks(result.releases, 'all');
     const name = `Radar de sorties · ${new Date().toLocaleDateString('fr-FR')}`;
-    await store.createSimplePlaylist(name, `Les sorties des ${result.days} derniers jours de mes artistes — Sillon`, uris);
-    store.say(`Playlist « ${name} » créée (${uris.length} titres).`);
+    const { count } = await store.createSimplePlaylist(name, `Les sorties des ${result.days} derniers jours de mes artistes — Sillon`, uris);
+    store.say(`Playlist « ${name} » créée (${count} titres).`);
   };
 
   return (

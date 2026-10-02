@@ -1,5 +1,6 @@
 // Social sans serveur (et compatible avec la limite de 5 utilisateurs du mode dev) :
 // chacun exporte sa « carte de goûts » (un petit JSON), l'échange, et l'app compare en local.
+import { songKey } from './dedupe';
 import { normalizeName } from './enrich';
 import { FAMILY_BY_ID } from './genres';
 import type { HistoryStore } from './history';
@@ -149,11 +150,25 @@ export interface Compatibility {
   sharedTracks: number;
 }
 
+type CardTrack = { uri: string; name: string; artist: string };
+
+/** Ensemble de titres : même URI, ou même morceau sous un autre id (version single chez l'un, album chez l'autre). */
+function trackSet(list: CardTrack[]) {
+  const keys = new Set<string>();
+  const keysOf = (t: CardTrack) => [t.uri, songKey(t.name, t.artist)];
+  const set = {
+    has: (t: CardTrack) => keysOf(t).some((k) => keys.has(k)),
+    add: (t: CardTrack) => keysOf(t).forEach((k) => keys.add(k)),
+  };
+  list.forEach(set.add);
+  return set;
+}
+
 export function compatibility(me: TasteCard, them: TasteCard): Compatibility {
   const am = new Map(me.artists.map((a) => [normalizeName(a.name), a.w]));
   const at = new Map(them.artists.map((a) => [normalizeName(a.name), a.w]));
-  const tm = new Set(me.tracks.map((t) => t.uri));
-  const sharedTracks = them.tracks.filter((t) => tm.has(t.uri)).length;
+  const tm = trackSet(me.tracks);
+  const sharedTracks = them.tracks.filter((t) => tm.has(t)).length;
 
   const parts: { label: string; value: number; weight: number }[] = [
     { label: 'Genres', value: cosine(me.families, them.families), weight: 0.35 },
@@ -198,15 +213,15 @@ export interface BlendTrack {
  * sans doublon et avec au plus 2 titres par artiste.
  */
 export function blend(me: TasteCard, them: TasteCard, size = 50): BlendTrack[] {
-  const themUris = new Set(them.tracks.map((t) => t.uri));
-  const shared = me.tracks.filter((t) => themUris.has(t.uri));
+  const themSongs = trackSet(them.tracks);
+  const shared = me.tracks.filter((t) => themSongs.has(t));
   const out: BlendTrack[] = [];
-  const used = new Set<string>();
+  const used = trackSet([]);
   const perArtist = new Map<string, number>();
-  const take = (t: { uri: string; name: string; artist: string }, from: BlendTrack['from']) => {
+  const take = (t: CardTrack, from: BlendTrack['from']) => {
     const a = normalizeName(t.artist);
-    if (used.has(t.uri) || (perArtist.get(a) ?? 0) >= 2) return false;
-    used.add(t.uri);
+    if (used.has(t) || (perArtist.get(a) ?? 0) >= 2) return false;
+    used.add(t);
     perArtist.set(a, (perArtist.get(a) ?? 0) + 1);
     out.push({ uri: t.uri, name: t.name, artist: t.artist, from });
     return true;
@@ -215,8 +230,8 @@ export function blend(me: TasteCard, them: TasteCard, size = 50): BlendTrack[] {
     if (out.length >= Math.ceil(size / 3)) break;
     take(t, 'both');
   }
-  const mine = me.tracks.filter((t) => !themUris.has(t.uri));
-  const theirs = them.tracks.filter((t) => !used.has(t.uri));
+  const mine = me.tracks.filter((t) => !themSongs.has(t));
+  const theirs = them.tracks.filter((t) => !used.has(t));
   let i = 0;
   let j = 0;
   while (out.length < size && (i < mine.length || j < theirs.length)) {

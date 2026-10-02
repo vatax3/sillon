@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { describeRule, generate } from '../lib/generator';
 import { playlistUrl } from '../lib/spotify';
 import type { Rule } from '../lib/types';
@@ -10,7 +10,7 @@ import { totalDuration, TrackList } from './ui';
  * renommer, puis créer la playlist sur Spotify.
  */
 export default function PlaylistPreview({
-  rule,
+  rule: liveRule,
   pool,
   defaultName,
   onReroll,
@@ -22,11 +22,16 @@ export default function PlaylistPreview({
 }) {
   const store = useStore();
   const index = store.index!;
+  // Les curseurs restent fluides : l'aperçu se recalcule juste après, sans bloquer la saisie.
+  const rule = useDeferredValue(liveRule);
+  const stale = rule !== liveRule;
   const poolSet = useMemo(() => (pool ? new Set(pool) : undefined), [pool]);
-  const result = useMemo(() => generate(index, rule, poolSet), [index, rule, poolSet]);
   const auto = useMemo(() => describeRule(rule, store.artistName), [rule, store.artistName]);
 
-  const [removed, setRemoved] = useState<Set<string>>(new Set());
+  // Titres retirés de l'aperçu : remplacés par d'autres, et mémorisés comme exclus dans la recette.
+  const [removed, setRemoved] = useState<string[]>([]);
+  const effectiveRule = useMemo<Rule>(() => (removed.length ? { ...rule, excluded: [...(rule.excluded ?? []), ...removed] } : rule), [rule, removed]);
+  const result = useMemo(() => generate(index, effectiveRule, poolSet), [index, effectiveRule, poolSet]);
   const [name, setName] = useState(defaultName ?? auto.name);
   const [nameTouched, setNameTouched] = useState(false);
   const [isPublic, setPublic] = useState(store.settings.publicByDefault);
@@ -39,12 +44,17 @@ export default function PlaylistPreview({
     if (!nameTouched) setName(defaultName ?? auto.name);
   }, [auto.name, defaultName, nameTouched]);
   useEffect(() => {
-    setRemoved(new Set());
+    setRemoved([]);
     setCreated(null);
-  }, [result]);
+  }, [rule, poolSet]);
 
-  const tracks = result.tracks.filter((t) => !removed.has(t.track.id));
-  const djInfo = rule.sort === 'harmonic' || rule.sort === 'energy_arc' || rule.sort === 'tempo_asc';
+  const tracks = result.tracks;
+  const djInfo = rule.sort === 'harmonic' || rule.sort === 'energy_arc' || rule.sort === 'tempo_asc' || rule.sort === 'tempo_desc';
+  const fullName = `${store.settings.playlistPrefix}${name.trim() || auto.name}`.slice(0, 100);
+  const nameTaken = useMemo(
+    () => !created && [...(store.library?.playlists ?? []).map((p) => p.name), ...store.saved.map((s) => s.name)].some((n) => n.toLowerCase() === fullName.toLowerCase()),
+    [created, fullName, store.library, store.saved],
+  );
 
   const create = async () => {
     setBusy(true);
@@ -55,7 +65,7 @@ export default function PlaylistPreview({
         description: auto.description,
         isPublic,
         tracks,
-        rule,
+        rule: effectiveRule,
         pool,
       });
       setCreated(saved.spotifyId);
@@ -67,7 +77,7 @@ export default function PlaylistPreview({
   };
 
   return (
-    <section className="preview">
+    <section className={stale ? 'preview stale' : 'preview'}>
       <div className="preview-head">
         <div>
           <h3>
@@ -75,6 +85,12 @@ export default function PlaylistPreview({
           </h3>
           <p className="muted small">
             {result.matchedCount} titres correspondent aux critères
+            {result.duplicatesRemoved > 0 && (
+              <span title="Autres versions d’un morceau déjà retenu (remaster, single / album…). Désactivable dans « Mise en forme ».">
+                {` · ${result.duplicatesRemoved} doublon(s) écarté(s)`}
+              </span>
+            )}
+            {removed.length > 0 && ` · ${removed.length} retiré(s) à la main`}
             {result.missingFeatures > 0 &&
               ` · ${result.missingFeatures} écartés faute d’audio-features (lance l’enrichissement)`}
           </p>
@@ -126,13 +142,15 @@ export default function PlaylistPreview({
               </button>
             )}
           </div>
+          {nameTaken && <p className="warn small">Une playlist porte déjà ce nom sur ton compte : Spotify en créera une deuxième.</p>}
           {created && <p className="success small">Playlist créée. Tu la retrouves dans « Mes playlists » pour l’actualiser plus tard.</p>}
           {error && <p className="error-text small">{error}</p>}
           <TrackList
             tracks={tracks}
             showDjInfo={djInfo}
             onPlay={(i) => store.playUris(tracks.map((t) => t.track.uri), i)}
-            onRemove={created ? undefined : (id) => setRemoved(new Set(removed).add(id))}
+            onRemove={created ? undefined : (id) => setRemoved([...removed, id])}
+            removeHint="Retirer (remplacé par un autre titre s’il en reste, et jamais remis lors des actualisations)"
           />
         </>
       )}

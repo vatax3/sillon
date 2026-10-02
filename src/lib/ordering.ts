@@ -102,6 +102,17 @@ export function energyArc(tracks: EnrichedTrack[]): EnrichedTrack[] {
   return [...up, ...down.reverse(), ...without];
 }
 
+/**
+ * Ordre de priorité pour choisir les titres à garder quand le filtre dépasse la limite :
+ * aléatoire, ou par affinité avec un peu d'aléa. Pas d'espacement des artistes ici (coûteux sur
+ * toute la bibliothèque, et c'est l'ordre final qui compte pour l'écoute).
+ */
+export function priorityOrder(tracks: EnrichedTrack[], byAffinity: boolean, seed: number): EnrichedTrack[] {
+  const rand = mulberry32(seed);
+  if (!byAffinity) return shuffle(tracks, rand);
+  return tracks.map((t) => ({ t, k: t.affinity + rand() * 0.5 })).sort((a, b) => b.k - a.k).map((x) => x.t);
+}
+
 /** Évite deux titres consécutifs du même artiste quand c'est possible. */
 export function spreadArtists(tracks: EnrichedTrack[]): EnrichedTrack[] {
   const pool = [...tracks];
@@ -143,9 +154,7 @@ export function sortTracks(tracks: EnrichedTrack[], mode: SortMode, seed: number
       return spreadArtists(shuffle(tracks, rand));
     case 'affinity':
       // Un peu d'aléa pour que deux générations ne soient pas identiques à égalité.
-      return spreadArtists(
-        tracks.map((t) => ({ t, k: t.affinity + rand() * 0.5 })).sort((a, b) => b.k - a.k).map((x) => x.t),
-      );
+      return spreadArtists(priorityOrder(tracks, true, seed));
     case 'added_desc':
       return [...tracks].sort((a, b) => byDate(b.track.likedAt) - byDate(a.track.likedAt));
     case 'release_asc':

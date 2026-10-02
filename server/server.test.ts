@@ -10,6 +10,12 @@ process.env.SPOTIFY_CLIENT_ID = 'test-client';
 process.env.DATA_DIR = dataDir;
 process.env.BASE_URL = 'https://sillon.example.com';
 process.env.TZ = 'Europe/Paris';
+// Interface factice, avec un dossier voisin au nom proche qui ne doit jamais être servi.
+process.env.STATIC_DIR = path.join(dataDir, 'dist');
+fs.mkdirSync(path.join(dataDir, 'dist'));
+fs.writeFileSync(path.join(dataDir, 'dist', 'index.html'), '<title>Sillon</title>');
+fs.mkdirSync(path.join(dataDir, 'dist-server'));
+fs.writeFileSync(path.join(dataDir, 'dist-server', 'secret.txt'), 'secret');
 
 type Db = typeof import('./db');
 type Sched = typeof import('./scheduler');
@@ -92,6 +98,14 @@ describe('API', () => {
     expect((await app.request('/api/revs')).status).toBe(401);
     const mine = await (await req('/api/config')).json();
     expect(mine.user).toMatchObject({ id: U, name: 'Alice' });
+  });
+
+  it('sert l’interface sans jamais sortir de son dossier', async () => {
+    expect(await (await app.request('/une/page')).text()).toContain('<title>Sillon');
+    for (const p of ['/%2e%2e/dist-server/secret.txt', '/..%2fdist-server%2fsecret.txt']) {
+      expect(await (await app.request(p)).text()).not.toContain('secret');
+    }
+    expect((await app.request('/%E0%A4%A')).status).toBe(400);
   });
 
   it('donne un jeton valide sans appel réseau', async () => {
@@ -267,6 +281,17 @@ describe('planification', () => {
     db.putDoc(U, 'saved', [{ spotifyId: 'live1', name: 'V', description: '', rule: {}, createdAt: '', updatedAt: '', trackCount: 0, isPublic: false, schedule: { freq: 'daily', day: 1, hour: 6 } }]);
     expect(sched.nextRuns(U).some((n) => n.kind === 'living' && n.target === 'live1')).toBe(true);
     sched.stopScheduler();
+  });
+
+  it('ne lance jamais l’enrichissement pendant une synchro', async () => {
+    // Spotify ne répond pas : la synchro reste en cours jusqu'à son annulation.
+    vi.stubGlobal('fetch', vi.fn((_: unknown, init?: RequestInit) => new Promise((_, reject) => init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError'))))));
+    const sync = sched.runJob(U, 'sync', 'manual');
+    await new Promise((r) => setTimeout(r, 10));
+    expect(await sched.runJob(U, 'enrich', 'manual')).toBeNull();
+    expect(sched.cancelJob(U, sched.runningRuns(U)[0])).toBe(true);
+    await sync;
+    expect(db.listRuns(U)[0]).toMatchObject({ kind: 'sync', status: 'error', message: 'Arrêtée' });
   });
 
   it('marque le compte à reconnecter si Spotify révoque l’accès', async () => {

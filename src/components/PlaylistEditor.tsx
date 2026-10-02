@@ -117,7 +117,7 @@ export default function PlaylistEditor({ playlistId, onClose }: { playlistId: st
   const detailsChanged = !!loaded && (name !== loaded.name || description !== loaded.description);
   const dirty = itemsChanged || detailsChanged;
   const hasLocal = items.some((i) => i.kind === 'local');
-  const dupes = items.length - dedupeItems(items).length;
+  const dupes = useMemo(() => items.length - dedupeItems(items).length, [items]);
 
   const save = async (forceWrite = false) => {
     if (!loaded) return;
@@ -250,7 +250,7 @@ export default function PlaylistEditor({ playlistId, onClose }: { playlistId: st
                 Inverser
               </button>
               {dupes > 0 && (
-                <button className="ghost small" onClick={() => setItems(dedupeItems(items))}>
+                <button className="ghost small" onClick={() => setItems(dedupeItems(items))} title="Même titre, ou autre version d’un même morceau (remaster, single / album…)">
                   Retirer {dupes} doublon(s)
                 </button>
               )}

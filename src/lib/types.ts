@@ -160,7 +160,11 @@ export interface Rule {
   /** Titres jamais inclus (retirés à la main dans l'éditeur). */
   excluded?: string[];
   maxTracks: number;
+  /** Durée totale maximale de la playlist, en minutes. */
+  maxMinutes?: number;
   maxPerArtist: number;
+  /** Garde les différentes versions d'un même morceau (remaster, single / album…) ; dédoublonné sinon. */
+  keepVersions?: boolean;
   sort: SortMode;
   seed: number;
 }

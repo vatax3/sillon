@@ -1,7 +1,8 @@
+import { dedupeSongs, SongSet, trackRef } from './dedupe';
 import { FAMILY_BY_ID } from './genres';
 import type { EnrichedTrack, LibraryIndex } from './indexer';
 import { MOOD_BY_ID } from './moods';
-import { SELECTING_SORTS, sortTracks, SORT_LABELS } from './ordering';
+import { priorityOrder, SELECTING_SORTS, sortTracks, SORT_LABELS } from './ordering';
 import type { AudioFeatures, Range, Rule, SavedPlaylist } from './types';
 
 export const defaultRule = (): Rule => ({
@@ -37,18 +38,17 @@ export interface FilterReport {
   missingFeatures: number;
 }
 
+/** Titres qui correspondent aux critères (les exclusions manuelles `rule.excluded` sont appliquées par `generate`). */
 export function filterTracks(index: LibraryIndex, rule: Rule, pool?: Set<string>, now = Date.now()): FilterReport {
   const featureFilter = FEATURE_KEYS.some((k) => rule[k]);
   const include = new Set(rule.artistsInclude);
   const exclude = new Set(rule.artistsExclude);
-  const banned = new Set(rule.excluded ?? []);
   const historyFilter = usesHistory(rule);
   let missingFeatures = 0;
 
   const matched = index.tracks.filter((t) => {
     const tr = t.track;
     if (pool && !pool.has(tr.id)) return false;
-    if (banned.has(tr.id)) return false;
     if (rule.sources.length && !rule.sources.some((s) => t.sources.includes(s))) return false;
     if (include.size && !tr.artists.some((a) => include.has(a.id))) return false;
     if (tr.artists.some((a) => exclude.has(a.id))) return false;
@@ -90,45 +90,74 @@ export function filterTracks(index: LibraryIndex, rule: Rule, pool?: Set<string>
   return { matched, missingFeatures };
 }
 
-/** Applique le plafond par artiste en respectant l'ordre de priorité donné. */
-export function capPerArtist(tracks: EnrichedTrack[], max: number, limit: number): EnrichedTrack[] {
+/**
+ * Applique le plafond par artiste en respectant l'ordre de priorité donné, jusqu'à `limit` titres
+ * et `maxMs` de durée cumulée.
+ */
+export function capPerArtist(tracks: EnrichedTrack[], max: number, limit: number, maxMs = Infinity): EnrichedTrack[] {
   const counts = new Map<string, number>();
   const out: EnrichedTrack[] = [];
+  let total = 0;
   for (const t of tracks) {
-    if (out.length >= limit) break;
+    if (out.length >= limit || maxMs - total < 90_000) break;
     const a = t.track.artists[0]?.id ?? '';
     const c = counts.get(a) ?? 0;
     if (max > 0 && c >= max) continue;
+    // Titre trop long pour le temps restant : on cherche plus court.
+    if (total + t.track.durationMs > maxMs) continue;
     counts.set(a, c + 1);
     out.push(t);
+    total += t.track.durationMs;
   }
   return out;
 }
+
+/** Version préférée d'un morceau : likée, la plus écoutée / appréciée, avec audio-features. */
+const preference = (t: EnrichedTrack) => (t.track.likedAt ? 100 : 0) + t.affinity + (t.features ? 0.5 : 0);
 
 export interface GeneratedPlaylist {
   tracks: EnrichedTrack[];
   matchedCount: number;
   missingFeatures: number;
+  /** Autres versions d'un morceau déjà présent, écartées. */
+  duplicatesRemoved: number;
 }
 
 /** `pool` restreint la génération à un sous-ensemble de titres (ex. une ambiance détectée). */
 export function generate(index: LibraryIndex, rule: Rule, pool?: Set<string>): GeneratedPlaylist {
   const banned = new Set(rule.excluded ?? []);
   // Les titres épinglés à la main passent avant tout, quels que soient les critères.
-  const pinned = (rule.pinned ?? []).filter((id) => !banned.has(id)).map((id) => index.byId.get(id)).filter((t): t is EnrichedTrack => !!t);
-  const pinnedIds = new Set(pinned.map((t) => t.track.id));
+  const pinnedIds = new Set<string>();
+  const pinned = (rule.pinned ?? [])
+    .filter((id) => !banned.has(id) && !pinnedIds.has(id) && pinnedIds.add(id))
+    .map((id) => index.byId.get(id))
+    .filter((t): t is EnrichedTrack => !!t);
   const filtered = filterTracks(index, rule, pool);
-  const matched = filtered.matched.filter((t) => !pinnedIds.has(t.track.id));
-  const room = Math.max(0, rule.maxTracks - pinned.length);
+  let matched = filtered.matched.filter((t) => !pinnedIds.has(t.track.id));
+
+  // Une seule version par morceau : celle qu'on préfère, quel que soit le tirage.
+  let duplicatesRemoved = 0;
+  if (!rule.keepVersions) {
+    const seen = new SongSet();
+    pinned.forEach((t) => seen.add(trackRef(t.track)));
+    const byPreference = [...matched].sort((a, b) => preference(b) - preference(a) || a.track.id.localeCompare(b.track.id));
+    const { kept, removed } = dedupeSongs(byPreference, (t) => trackRef(t.track), seen);
+    duplicatesRemoved = removed.length;
+    const keep = new Set(kept);
+    matched = matched.filter((t) => keep.has(t));
+  }
+
   // Sélection d'abord (aléatoire ou par affinité), mise en ordre ensuite :
   // sinon « énergie croissante » + limite 50 ne garderait que les 50 titres les plus calmes.
-  const selectionOrder = sortTracks(matched, rule.sort === 'affinity' ? 'affinity' : 'shuffle', rule.seed);
+  // Les exclusions sont retirées après le tirage : retirer un titre de l'aperçu ne rebat pas les autres.
+  const room = Math.max(0, rule.maxTracks - pinned.length);
+  const budget = rule.maxMinutes ? rule.maxMinutes * 60_000 - pinned.reduce((s, t) => s + t.track.durationMs, 0) : Infinity;
   // Pour les tris chronologiques ou par écoutes, on veut les plus récents/anciens/écoutés de tout le filtre.
-  const picked = SELECTING_SORTS.includes(rule.sort)
-    ? capPerArtist(sortTracks(matched, rule.sort, rule.seed), rule.maxPerArtist, room)
-    : capPerArtist(selectionOrder, rule.maxPerArtist, room);
+  const order = SELECTING_SORTS.includes(rule.sort) ? sortTracks(matched, rule.sort, rule.seed) : priorityOrder(matched, rule.sort === 'affinity', rule.seed);
+  const candidates = order.filter((t) => !banned.has(t.track.id));
+  const picked = capPerArtist(candidates, rule.maxPerArtist, room, budget);
   const tracks = sortTracks([...pinned, ...picked], rule.sort, rule.seed);
-  return { tracks, matchedCount: matched.length + pinned.length, missingFeatures: filtered.missingFeatures };
+  return { tracks, matchedCount: candidates.length + pinned.length, missingFeatures: filtered.missingFeatures, duplicatesRemoved };
 }
 
 /**
@@ -144,6 +173,8 @@ export function livingRefresh(index: LibraryIndex, saved: SavedPlaylist, seed = 
 }
 
 // ---------- Nom et description automatiques ----------
+
+export const formatMinutes = (m: number) => (m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? ` ${String(m % 60).padStart(2, '0')}` : ''}` : `${m} min`);
 
 export function describeRule(rule: Rule, artistName: (id: string) => string): { name: string; description: string } {
   const parts: string[] = [];
@@ -166,6 +197,7 @@ export function describeRule(rule: Rule, artistName: (id: string) => string): { 
   if (rule.notPlayedForDays) parts.push(`pas écoutés depuis ${rule.notPlayedForDays} j`);
   if (rule.playedWithinDays) parts.push(`écoutés ces ${rule.playedWithinDays} j`);
   if (rule.discoveredWithinDays) parts.push(`découverts ces ${rule.discoveredWithinDays} j`);
+  if (rule.maxMinutes) parts.push(`${formatMinutes(rule.maxMinutes)} max`);
   const name = parts.length ? parts.slice(0, 3).join(' · ') : 'Mix de ma bibliothèque';
   const description = `${[...parts, SORT_LABELS[rule.sort].toLowerCase()].join(' · ')} — généré par Sillon le ${new Date().toLocaleDateString('fr-FR')}`;
   return { name, description: description.slice(0, 300) };

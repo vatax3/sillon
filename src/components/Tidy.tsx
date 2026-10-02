@@ -5,7 +5,7 @@ import { MOOD_BY_ID } from '../lib/moods';
 import { sortTracks } from '../lib/ordering';
 import { artistUrl, playlistUrl, trackUrl } from '../lib/spotify';
 import {
-  dedupeIds,
+  dedupePlaylist,
   diffWithBackup,
   followSuggestions,
   inPlaylistsNotLiked,
@@ -157,8 +157,9 @@ function Orphans({ tracks }: { tracks: EnrichedTrack[] }) {
   }, [current, profiles]);
 
   const file = async (playlistId: string) => {
-    await store.addToPlaylist(playlistId, [current.track.id]);
-    store.say(`« ${current.track.name} » rangé dans « ${lib.playlists.find((p) => p.id === playlistId)?.name} ».`);
+    const added = await store.addToPlaylist(playlistId, [current.track.id]);
+    const where = lib.playlists.find((p) => p.id === playlistId)?.name;
+    store.say(added ? `« ${current.track.name} » rangé dans « ${where} ».` : `« ${where} » contient déjà ce morceau (ou une autre version).`);
   };
   const skip = () => setSkipped(new Set(skipped).add(current.track.id));
 
@@ -267,12 +268,18 @@ function Health() {
           <h3>Doublons dans une même playlist</h3>
         </header>
         {withDupes.length === 0 ? (
-          <p className="muted small">Aucune playlist ne contient deux fois le même titre. 👌</p>
+          <p className="muted small">Aucune playlist ne contient deux fois le même titre (ni deux versions du même morceau). 👌</p>
         ) : (
           <ul className="rows">
             {withDupes.map((h) => (
-              <TrackRow key={h.id} image={null} title={h.name} subtitle={`${h.size} titres dont ${h.duplicates} en double`} href={playlistUrl(h.id)}>
-                <AsyncButton onClick={() => store.rewritePlaylist(h.id, dedupeIds(lib.playlistItems![h.id]), `« ${h.name} » dédoublonnée`)}>Dédoublonner</AsyncButton>
+              <TrackRow
+                key={h.id}
+                image={null}
+                title={h.name}
+                subtitle={`${h.size} titres dont ${h.duplicates} en double${h.versions ? ` (${h.versions === h.duplicates ? 'toutes' : `dont ${h.versions}`} : autre version d’un même morceau)` : ''}`}
+                href={playlistUrl(h.id)}
+              >
+                <AsyncButton onClick={() => store.rewritePlaylist(h.id, dedupePlaylist(lib, lib.playlistItems![h.id]), `« ${h.name} » dédoublonnée`)}>Dédoublonner</AsyncButton>
               </TrackRow>
             ))}
           </ul>
@@ -324,8 +331,8 @@ function Health() {
           onClick={async () => {
             const ids = mergePlaylists(lib, mergeSel);
             const name = mergeSel.map(nameOf).join(' + ').slice(0, 90);
-            await store.createSimplePlaylist(name, 'Fusion sans doublons — Sillon', ids.map((id) => `spotify:track:${id}`));
-            store.say(`« ${name} » créée (${ids.length} titres, sans doublons).`);
+            const { count } = await store.createSimplePlaylist(name, 'Fusion sans doublons — Sillon', ids.map((id) => `spotify:track:${id}`));
+            store.say(`« ${name} » créée (${count} titres, sans doublons).`);
             setMergeSel([]);
           }}
         >

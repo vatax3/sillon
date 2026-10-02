@@ -3,7 +3,7 @@ import { emptyHistory, FLAG_NO_DURATION, FLAG_SKIPPED, mergePlays, parseExport, 
 import { availablePeriods, computeHistoryStats, loyalArtists, moodByMoment, timeMachine, topTracksWhere, yearsSummary } from './historyStats';
 import { buildIndex } from './indexer';
 import { blend, buildTasteCard, compatibility, parseTasteCard, type TasteCard } from './social';
-import { dedupeIds, diffWithBackup, followSuggestions, inPlaylistsNotLiked, likedOrphans, mergePlaylists, playlistHealth, playlistOverlaps, snapshot } from './tools';
+import { dedupePlaylist, diffWithBackup, followSuggestions, inPlaylistsNotLiked, likedOrphans, mergePlaylists, playlistHealth, playlistOverlaps, snapshot } from './tools';
 import type { Library, Track } from './types';
 
 const DAY = 86_400_000;
@@ -163,14 +163,24 @@ describe('outils de rangement', () => {
 
   it('compte les doublons et les recouvrements', () => {
     const h = playlistHealth(l);
-    expect(h.find((x) => x.id === 'p1')).toMatchObject({ duplicates: 1, duplicateIds: ['a'] });
+    expect(h.find((x) => x.id === 'p1')).toMatchObject({ duplicates: 1, versions: 0 });
     const o = playlistOverlaps(l, 0.5, 2);
     expect(o[0]).toMatchObject({ a: 'p1', b: 'p2', shared: 2, containment: 1 });
   });
 
   it('fusionne sans doublons et dédoublonne en gardant l’ordre', () => {
     expect(mergePlaylists(l, ['p1', 'p2'])).toEqual(['a', 'b', 'd', 'e']);
-    expect(dedupeIds(['a', 'b', 'a', 'c', 'b'])).toEqual(['a', 'b', 'c']);
+    expect(dedupePlaylist(l, ['a', 'b', 'a', 'c', 'b'])).toEqual(['a', 'b', 'c']);
+  });
+
+  it('repère les autres versions d’un même morceau', () => {
+    const v = structuredClone(l);
+    v.tracks.a2 = { ...v.tracks.a, id: 'a2', uri: 'spotify:track:a2', name: 'Song a - Remastered 2011' };
+    v.tracks.live = { ...v.tracks.a, id: 'live', uri: 'spotify:track:live', name: 'Song a (Live)' };
+    v.playlistItems!.p1 = ['a', 'b', 'a2', 'live', 'unknown', 'unknown'];
+    expect(dedupePlaylist(v, v.playlistItems!.p1)).toEqual(['a', 'b', 'live', 'unknown']);
+    expect(playlistHealth(v).find((x) => x.id === 'p1')).toMatchObject({ duplicates: 2, versions: 1 });
+    expect(mergePlaylists(v, ['p2', 'p1'])).toEqual(['b', 'd', 'e', 'a', 'live', 'unknown']);
   });
 
   it('suggère les artistes à suivre', () => {

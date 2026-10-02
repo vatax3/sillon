@@ -215,7 +215,8 @@ details.rule-section[open] > summary { margin-bottom: 10px; }
 .range-sliders { display: flex; flex-direction: column; gap: 0; padding-left: 23px; }
 
 /* ---------- Aperçu ---------- */
-.preview { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.preview { display: flex; flex-direction: column; gap: 12px; min-width: 0; transition: opacity .15s; }
+.preview.stale { opacity: .6; }
 .preview-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .preview-head p { margin: 2px 0 0; }
 .create-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }

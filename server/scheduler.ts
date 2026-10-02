@@ -1,5 +1,6 @@
 // Planificateur : un jeu de tâches cron par utilisateur, reconstruit dès que sa configuration change.
-// Une même tâche (ex. synchro) ne tourne jamais deux fois en parallèle pour un même compte.
+// Une même tâche (ex. synchro) ne tourne jamais deux fois en parallèle pour un même compte,
+// ni la synchro en même temps que l'enrichissement.
 import { Cron } from 'croner';
 import { JOB_LABELS, toCron, withDefaults, type Automations, type JobKind, type JobRun, type Schedule } from '../src/lib/automations';
 import type { SavedPlaylist } from '../src/lib/types';
@@ -12,6 +13,9 @@ import { TASKS } from './tasks';
 const running = new Map<string, { runId: number; controller: AbortController }>();
 const crons = new Map<string, Cron[]>();
 const runKey = (userId: string, kind: JobKind, target?: string) => `${userId}:${kind}:${target ?? ''}`;
+// La synchro enchaîne sur l'enrichissement : les deux écrivent les mêmes documents (features, tags)
+// et ne doivent jamais tourner ensemble, sous peine d'écraser le travail de l'autre.
+const lockKey = (userId: string, kind: JobKind, target?: string) => runKey(userId, kind === 'enrich' ? 'sync' : kind, target);
 
 export interface NextRun {
   kind: JobKind;
@@ -21,7 +25,7 @@ export interface NextRun {
 
 /** Lance une tâche (planifiée ou manuelle). Ne rejette jamais : le résultat va dans le journal. */
 export async function runJob(userId: string, kind: Exclude<JobKind, 'import'>, trigger: JobRun['trigger'], target?: string): Promise<number | null> {
-  const key = runKey(userId, kind, target);
+  const key = lockKey(userId, kind, target);
   if (running.has(key)) return null;
   const user = getUser(userId);
   if (!user || user.needs_reauth) return null;

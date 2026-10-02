@@ -1,4 +1,4 @@
-import { normalizeName } from './enrich';
+import { songKey } from './dedupe';
 import { FAMILY_BY_ID } from './genres';
 import type { EnrichedTrack, LibraryIndex } from './indexer';
 import { MOOD_BY_ID } from './moods';
@@ -41,11 +41,6 @@ const topN = (m: Map<string, number>, n: number, label: (k: string) => string): 
 
 const inc = (m: Map<string, number>, k: string, by = 1) => m.set(k, (m.get(k) ?? 0) + by);
 
-/** « Titre (Remastered 2011) - Live » → « titre » pour repérer les doublons. */
-export function canonicalTitle(name: string): string {
-  return normalizeName(name.replace(/\s*[([].*?[)\]]/g, '').replace(/\s+-\s+.*$/, ''));
-}
-
 export function computeStats(lib: Library, index: LibraryIndex): LibraryStats {
   const tracks = index.tracks;
   const families = new Map<string, number>();
@@ -76,11 +71,11 @@ export function computeStats(lib: Library, index: LibraryIndex): LibraryStats {
   const avg = (k: 'energy' | 'valence' | 'danceability' | 'acousticness' | 'instrumentalness') =>
     withF.length ? withF.reduce((s, t) => s + t.features![k], 0) / withF.length : 0;
 
-  // Doublons probables parmi les likés : même titre canonique + même artiste principal
-  // (attrape les versions remaster / single / album d'un même morceau).
+  // Doublons probables parmi les likés : même morceau (titre sans mentions d'édition) + même artiste principal
+  // (attrape les versions remaster / single / album ; un live ou un remix reste distinct).
   const groups = new Map<string, EnrichedTrack[]>();
   for (const t of tracks.filter((t) => t.track.likedAt)) {
-    const key = `${canonicalTitle(t.track.name)}|${t.track.artists[0]?.id ?? ''}`;
+    const key = songKey(t.track.name, t.track.artists[0]?.name ?? '');
     const list = groups.get(key) ?? [];
     list.push(t);
     groups.set(key, list);

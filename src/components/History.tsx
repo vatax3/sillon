@@ -6,6 +6,7 @@ import {
   CONTEXTS,
   loyalArtists,
   moodByMoment,
+  rankedUris,
   timeMachine,
   topTracksWhere,
   yearsSummary,
@@ -260,7 +261,7 @@ function Panel({ title, hint, children }: { title: string; hint?: string; childr
 
 function CreateFromHistory({ h, rows, name, description }: { h: HistoryStore; rows: Ranked<number>[]; name: string; description: string }) {
   const { createSimplePlaylist, say, playUris } = useStore();
-  const uris = rows.map((r) => h.tracks[r.key].key).filter((k) => !k.startsWith('n:')).map((k) => `spotify:track:${k}`);
+  const uris = useMemo(() => rankedUris(h, rows), [h, rows]);
   if (!uris.length) return null;
   return (
     <span className="row">
@@ -270,8 +271,8 @@ function CreateFromHistory({ h, rows, name, description }: { h: HistoryStore; ro
       <AsyncButton
         className="primary small"
         onClick={async () => {
-          await createSimplePlaylist(name, description, uris);
-          say(`Playlist « ${name} » créée (${uris.length} titres).`);
+          const { count } = await createSimplePlaylist(name, description, uris);
+          say(`Playlist « ${name} » créée (${count} titres).`);
         }}
       >
         Créer la playlist ({uris.length})

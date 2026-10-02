@@ -214,8 +214,8 @@ function FriendPanel({ me, them, live }: { me: TasteCard; them: TasteCard; live?
             onClick={async () => {
               const tracks = blend(me, them, 50);
               const name = `Blend ${me.name} × ${them.name}`;
-              await store.createSimplePlaylist(name, `Un tiers de titres en commun, puis vos favoris en alternance — Sillon`, tracks.map((t) => t.uri));
-              store.say(`« ${name} » créée (${tracks.length} titres).`);
+              const { count } = await store.createSimplePlaylist(name, `Un tiers de titres en commun, puis vos favoris en alternance — Sillon`, tracks.map((t) => t.uri));
+              store.say(`« ${name} » créée (${count} titres).`);
             }}
           >
             Créer notre Blend

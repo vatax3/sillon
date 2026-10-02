@@ -3,6 +3,7 @@
 // 2. leurs titres phares (Deezer), en écartant tout ce que tu connais déjà (bibliothèque + historique) ;
 // 3. résolution vers Spotify par recherche, pour pouvoir liker / lire / créer une playlist.
 import * as dz from './deezer';
+import { songKey } from './dedupe';
 import { normalizeName } from './enrich';
 import { nameKey, type HistoryStore } from './history';
 import { computeHistoryStats } from './historyStats';
@@ -31,7 +32,7 @@ export interface RecoOptions {
   seeds: Seed[];
   /** Noms d'artistes normalisés déjà connus. */
   knownArtists: Set<string>;
-  /** Clés nameKey(artiste, titre) des titres déjà connus. */
+  /** Clés nameKey(artiste, titre) et songKey(titre, artiste) des titres déjà connus. */
   knownTracks: Set<string>;
   /** Titres Spotify déjà connus (ids). */
   knownIds: Set<string>;
@@ -76,14 +77,19 @@ export function knownSets(library: Library | null, history: HistoryStore | null)
   for (const t of Object.values(library?.tracks ?? {})) {
     ids.add(t.id);
     tracks.add(nameKey(t.artists[0]?.name ?? '', t.name));
+    tracks.add(songKey(t.name, t.artists[0]?.name ?? ''));
   }
   for (const t of history?.tracks ?? []) {
     artists.add(normalizeName(t.artist));
     tracks.add(nameKey(t.artist, t.name));
+    tracks.add(songKey(t.name, t.artist));
     if (!t.key.startsWith('n:')) ids.add(t.key);
   }
   return { artists, tracks, ids };
 }
+
+/** Titre déjà connu, sous ce nom exact ou dans une autre version (remaster, single / album…). */
+const isKnown = (known: Set<string>, artist: string, title: string) => known.has(nameKey(artist, title)) || known.has(songKey(title, artist));
 
 /** Retrouve un titre sur Spotify ; le premier résultat dont l'artiste correspond. */
 export async function resolveOnSpotify(title: string, artist: string, signal?: AbortSignal): Promise<sp.RawTrack | null> {
@@ -138,7 +144,7 @@ export async function recommend(opts: RecoOptions): Promise<Recommendation[]> {
         let taken = 0;
         for (const t of top) {
           if (taken >= opts.perArtist) break;
-          if (opts.knownTracks.has(nameKey(t.artist.name, t.title))) continue;
+          if (isKnown(opts.knownTracks, t.artist.name, t.title)) continue;
           picks.push({ t, c });
           taken++;
         }
@@ -186,10 +192,16 @@ export async function recommend(opts: RecoOptions): Promise<Recommendation[]> {
     { concurrency: 2, minIntervalMs: 150, signal },
   );
 
+  // Deux titres Deezer peuvent mener au même morceau Spotify (ou à deux versions du même).
   const seen = new Set<string>();
   return out
-    .filter((r) => !seen.has(r.spotify.id) && seen.add(r.spotify.id))
     .sort((a, b) => b.score - a.score)
+    .filter((r) => {
+      const keys = [r.spotify.id, songKey(r.title, r.artist)];
+      if (keys.some((k) => seen.has(k))) return false;
+      keys.forEach((k) => seen.add(k));
+      return true;
+    })
     .slice(0, opts.size);
 }
 

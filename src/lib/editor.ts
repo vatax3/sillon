@@ -1,5 +1,6 @@
 // Logique de l'éditeur de playlists, sans UI : déplacements, dédoublonnage, historique d'annulation,
 // et traduction des retouches manuelles en titres épinglés / exclus pour les playlists vivantes.
+import { SongSet, type SongRef } from './dedupe';
 import type { Rule } from './types';
 
 export interface EditorItem {
@@ -34,13 +35,20 @@ export function moveKeys(items: EditorItem[], keys: Set<string>, where: 'top' | 
   return where === 'top' ? [...picked, ...rest] : [...rest, ...picked];
 }
 
-/** Retire les doublons (même URI), en gardant la première occurrence. Les fichiers locaux sont conservés. */
+/**
+ * Retire les doublons (même URI, ou autre version d'un morceau déjà présent : remaster, single / album…),
+ * en gardant la première occurrence. Les fichiers locaux sont conservés.
+ */
 export function dedupeItems(items: EditorItem[]): EditorItem[] {
   const seen = new Set<string>();
+  const songs = new SongSet();
   return items.filter((i) => {
     if (i.kind === 'local') return true;
-    if (seen.has(i.uri)) return false;
+    // Artiste principal : le premier de la liste affichée.
+    const ref: SongRef | undefined = i.kind === 'track' && i.artists ? { name: i.name, artist: i.artists.split(', ')[0] } : undefined;
+    if (seen.has(i.uri) || (ref && songs.has(ref))) return false;
     seen.add(i.uri);
+    if (ref) songs.add(ref);
     return true;
   });
 }

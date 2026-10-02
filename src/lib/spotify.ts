@@ -2,7 +2,7 @@
 // - pas d'endpoints batch (GET /artists?ids=…), pas d'audio-features, pas de popularité ;
 // - playlists : /me/playlists (création) et /playlists/{id}/items (contenu) ;
 // - le contenu n'est lisible que pour les playlists possédées ou collaboratives.
-import { chunk, fetchWithRetry, HttpError } from './http';
+import { chunk, fetchWithRetry, HttpError, throttledEach } from './http';
 import type { TimeRange } from './types';
 
 const BASE = 'https://api.spotify.com/v1';
@@ -75,6 +75,40 @@ export async function paginate<T>(
   return all;
 }
 
+/**
+ * Endpoint paginé par offset : la première page donne le total, les suivantes partent en parallèle
+ * (débit borné, ordre conservé). Bien plus rapide que de suivre `next` page par page sur une grosse bibliothèque.
+ */
+export async function paginateParallel<T>(
+  path: string,
+  pageSize: number,
+  onPage?: (loaded: number, total?: number) => void,
+  signal?: AbortSignal,
+): Promise<T[]> {
+  const sep = path.includes('?') ? '&' : '?';
+  const pageUrl = (offset: number) => `${path}${sep}limit=${pageSize}&offset=${offset}`;
+  const first = await api<Page<T>>(pageUrl(0), {}, signal);
+  const pages: T[][] = [first.items ?? []];
+  let loaded = pages[0].length;
+  onPage?.(loaded, first.total);
+  if (!first.next) return pages[0];
+  // Total inconnu : on suit les liens `next` comme avant.
+  if (first.total === undefined) return [...pages[0], ...(await paginate<T>(first.next, (n, t) => onPage?.(loaded + n, t), signal))];
+  const offsets: number[] = [];
+  for (let o = pageSize; o < first.total; o += pageSize) offsets.push(o);
+  await throttledEach(
+    offsets,
+    async (offset, i) => {
+      const page = await api<Page<T>>(pageUrl(offset), {}, signal);
+      pages[i + 1] = page.items ?? [];
+      loaded += pages[i + 1].length;
+      onPage?.(loaded, first.total);
+    },
+    { concurrency: 4, minIntervalMs: 60, signal },
+  );
+  return pages.flat();
+}
+
 // ---- Objets bruts (sous-ensemble utile) ----
 
 export interface RawArtist {
@@ -109,11 +143,11 @@ export interface RawPlaylist {
 
 // ---- Endpoints ----
 
-export const getMe = () =>
-  api<{ id: string; display_name: string | null; images?: { url: string }[] }>('/me');
+export const getMe = (signal?: AbortSignal) =>
+  api<{ id: string; display_name: string | null; images?: { url: string }[] }>('/me', {}, signal);
 
 export const getSavedTracks = (onPage?: (n: number, t?: number) => void, signal?: AbortSignal) =>
-  paginate<{ added_at: string; track: RawTrack }>('/me/tracks?limit=50', onPage, signal);
+  paginateParallel<{ added_at: string; track: RawTrack }>('/me/tracks', 50, onPage, signal);
 
 export const getMyPlaylists = (signal?: AbortSignal) =>
   paginate<RawPlaylist | null>('/me/playlists?limit=50', undefined, signal);
@@ -243,7 +277,7 @@ export async function getArtistReleases(id: string, group: 'album' | 'single', s
 }
 
 export async function getAlbumTracks(id: string, signal?: AbortSignal) {
-  const page = await api<Page<{ id: string; uri: string; name: string }>>(`/albums/${id}/tracks?limit=50`, {}, signal);
+  const page = await api<Page<{ id: string; uri: string; name: string; artists: { id: string; name: string }[] }>>(`/albums/${id}/tracks?limit=50`, {}, signal);
   return page.items;
 }
 
@@ -282,10 +316,16 @@ export const getDevices = async () => (await api<{ devices: Device[] }>('/me/pla
 export async function play(opts: { uris?: string[]; contextUri?: string; offset?: number; deviceId?: string }) {
   const q = opts.deviceId ? `?device_id=${opts.deviceId}` : '';
   const body: Record<string, unknown> = {};
-  // Au-delà de quelques centaines d'URIs la requête est refusée : on démarre avec un lot raisonnable.
-  if (opts.uris) body.uris = opts.uris.slice(0, 200);
+  // Au-delà de quelques centaines d'URIs la requête est refusée : on envoie un lot de 200 qui
+  // contient le titre de départ (sinon « lire à partir du 250ᵉ » échouerait).
+  let offset = opts.offset;
+  if (opts.uris) {
+    const start = offset !== undefined && offset >= 200 ? offset : 0;
+    body.uris = opts.uris.slice(start, start + 200);
+    if (offset !== undefined) offset -= start;
+  }
   if (opts.contextUri) body.context_uri = opts.contextUri;
-  if (opts.offset !== undefined) body.offset = { position: opts.offset };
+  if (offset !== undefined) body.offset = { position: offset };
   await api(`/me/player/play${q}`, { method: 'PUT', body: JSON.stringify(body) });
 }
 export const pause = () => api('/me/player/pause', { method: 'PUT' });
